@@ -1,0 +1,91 @@
+"""
+VYOM Backend — FastAPI Application Entry Point
+"""
+import sys
+import os
+sys.path.insert(0, os.path.dirname(__file__))
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+
+from core.database import init_db
+from api.missions import router as missions_router
+from api.faults import router as faults_router
+from api.telemetry import telemetry_router, blackbox_router, commands_router
+from api.reports import router as reports_router
+from api.websocket import websocket_endpoint
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+)
+logger = logging.getLogger("vyom")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    logger.info("✓ VYOM Backend started — Database initialized")
+    logger.info("✓ WebSocket endpoint: ws://localhost:8000/ws/{mission_id}")
+    logger.info("✓ API docs: http://localhost:8000/docs")
+    yield
+
+# ── App ──────────────────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="VYOM Mission Digital Twin Backend",
+    description="Authoritative simulation backend for VYOM space mission platform",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan,
+)
+
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# Wildcard origin + credentials is not allowed by the CORS spec. The app does
+# not use cookies, so credentials stay disabled; lock origins down in prod.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],          # Frontend on any port
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── REST Routers ──────────────────────────────────────────────────────────────
+app.include_router(missions_router)
+app.include_router(faults_router)
+app.include_router(telemetry_router)
+app.include_router(blackbox_router)
+app.include_router(commands_router)
+app.include_router(reports_router)
+
+
+# ── WebSocket ─────────────────────────────────────────────────────────────────
+@app.websocket("/ws/{mission_id}")
+async def ws_endpoint(mission_id: str, websocket: WebSocket):
+    await websocket_endpoint(mission_id, websocket)
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
+@app.get("/health")
+def health_check():
+    from simulation.loop import _simulations
+    return {
+        "status": "operational",
+        "version": "2.0.0",
+        "active_simulations": len(_simulations),
+        "simulation_ids": list(_simulations.keys()),
+    }
+
+
+@app.get("/")
+def root():
+    return {
+        "service": "VYOM Mission Digital Twin Backend",
+        "status": "running",
+        "docs": "http://localhost:8000/docs",
+        "ws": "ws://localhost:8000/ws/{mission_id}",
+    }
