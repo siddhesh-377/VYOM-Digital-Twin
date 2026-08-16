@@ -284,10 +284,11 @@ export function connectBackend(missionId: string): void {
   backendWS.connect(missionId);
 }
 
-/** Map frontend scenario ids to the backend fault catalogue (hyphenated -> underscore catalogue keys). */
+// Map frontend UI threat IDs to backend canonical fault catalogue keys
 const THREAT_ID_TO_FAULT_TYPE: Record<string, string> = {
   'solar-storm': 'solar_storm',
-  'solar-flare': 'radiation_spike',
+  'asteroid': 'solar_panel_degradation',
+  'debris': 'solar_panel_degradation',
   'power-failure': 'battery_failure',
   'thermal-failure': 'thermal_overheating',
   'communication-failure': 'comm_failure',
