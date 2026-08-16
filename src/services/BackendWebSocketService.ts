@@ -337,6 +337,7 @@ export async function createAndStartMission(config: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
+      signal: AbortSignal.timeout(5000),
     });
     if (!createRes.ok) {
       console.warn('[VYOM API] Create mission failed:', await createRes.text());
@@ -346,6 +347,7 @@ export async function createAndStartMission(config: {
     // 2. Start simulation
     const startRes = await fetch(`${BACKEND_API_URL}/api/missions/${config.id}/start`, {
       method: 'POST',
+      signal: AbortSignal.timeout(5000),
     });
     if (!startRes.ok) {
       console.warn('[VYOM API] Start mission failed:', await startRes.text());
