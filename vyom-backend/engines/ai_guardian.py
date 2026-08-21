@@ -182,7 +182,7 @@ class AIGuardian:
         critical_count = sum(1 for a in anomalies if a.severity == "critical")
         steps.append(self._make_step(2, "diagnosing",
             "Anomaly Correlation & Subsystem Affinity Mapping",
-            f"Correlating {len(anomalies)} signals. {critical_count} critical alerts. Channels: {', '.join(set(anomaly_channels)[:5])}",
+            f"Correlating {len(anomalies)} signals. {critical_count} critical alerts. Channels: {', '.join(sorted(set(anomaly_channels))[:5])}",
             97.2, now_ms + 200))
 
         # Step 3: Root Cause Analysis

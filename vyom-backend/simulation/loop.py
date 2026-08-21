@@ -282,7 +282,7 @@ class MissionSimulation:
         health_factor = self.state.overall_health / 100.0
         day_progress = min(98.0, self.mission_day * 5.0)  # 5% per day, capped at 98
         self.objective_progress = round(day_progress * health_factor, 2)
-        if self.objective_progress >= 98.0 and self.status == "active":
+        if day_progress >= 98.0 and self.status == "active":
             self.objective_progress = 100.0
             self.status = "completed"
 

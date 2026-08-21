@@ -347,5 +347,6 @@ def build_telemetry_dict(state: SpacecraftState, mission_day: float) -> Dict[str
         },
         "overallHealth": state.overall_health,
         "healthStatus": state.health_status,
+        "crew": [],
         "dataSource": "backend",
     }

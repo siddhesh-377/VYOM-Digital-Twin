@@ -32,7 +32,7 @@ class CrewMemberSchema(BaseModel):
 
 class MissionCreateSchema(BaseModel):
     id: Optional[str] = None
-    name: str
+    name: str = Field(min_length=1)
     type: str = "orbital"
     destination: str = "earth-orbit"
     objective: str = ""
