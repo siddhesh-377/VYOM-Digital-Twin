@@ -224,12 +224,12 @@ export function ScenariosScreen() {
             </div>
           </div>
 
-          {/* Recent events */}
-          <div style={{ flex: 1 }}>
+          {/* Recent events & Comparison */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.15em', color: 'rgba(255,255,255,0.3)', marginBottom: 12 }}>
               RECENT EVENTS
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
               <AnimatePresence>
                 {recentEvents.map((ev) => (
                   <motion.div
@@ -257,6 +257,31 @@ export function ScenariosScreen() {
                   No events yet — trigger a scenario
                 </div>
               )}
+            </div>
+
+            {/* AI vs Manual Performance Card */}
+            <div style={{ marginTop: 20, padding: '16px', background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8 }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.7)', letterSpacing: '0.1em', marginBottom: 10 }}>
+                📊 AI VS MANUAL PERFORMANCE METRICS
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}>VYOM AI GUARDIAN AVG</div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: '#00ff88', fontWeight: 700 }}>
+                    {useMissionStore.getState().incidents.filter(i => i.recovery_mode === 'ai' && i.total_resolution_ms).length > 0 
+                      ? (useMissionStore.getState().incidents.filter(i => i.recovery_mode === 'ai' && i.total_resolution_ms).reduce((a, b) => a + (b.total_resolution_ms || 0), 0) / useMissionStore.getState().incidents.filter(i => i.recovery_mode === 'ai' && i.total_resolution_ms).length / 1000).toFixed(1) + 's' 
+                      : '--'}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}>MANUAL CONTROL AVG</div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: '#ff8c00', fontWeight: 700 }}>
+                    {useMissionStore.getState().incidents.filter(i => i.recovery_mode === 'manual' && i.total_resolution_ms).length > 0 
+                      ? (useMissionStore.getState().incidents.filter(i => i.recovery_mode === 'manual' && i.total_resolution_ms).reduce((a, b) => a + (b.total_resolution_ms || 0), 0) / useMissionStore.getState().incidents.filter(i => i.recovery_mode === 'manual' && i.total_resolution_ms).length / 1000).toFixed(1) + 's' 
+                      : '--'}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

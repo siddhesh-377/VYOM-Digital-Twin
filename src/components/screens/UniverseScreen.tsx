@@ -727,14 +727,16 @@ function UniverseSatellite({
 }) {
   const satGroupRef = useRef<THREE.Group>(null);
   const telemetry = useMissionStore((s) => s.telemetry);
+  const orbitTrail = useMissionStore((s) => s.orbitTrail);
   const posVec = useMemo(() => new THREE.Vector3(), []);
+  
+  const orbitRadius = 4.2;
+  const incl = (telemetry?.orbit.inclinationDeg ?? 51.6) * (Math.PI / 180);
 
   useFrame(() => {
     if (!satGroupRef.current) return;
-    const orbitRadius = 4.2;
     const speed = 1.8;
     const angle = simTime * speed * 0.4;
-    const incl = (telemetry?.orbit.inclinationDeg ?? 51.6) * (Math.PI / 180);
 
     const localX = Math.cos(angle) * orbitRadius;
     const localZ = Math.sin(angle) * orbitRadius * Math.cos(incl);
@@ -749,15 +751,25 @@ function UniverseSatellite({
   });
 
   return (
-    <group ref={satGroupRef} onClick={(e) => { e.stopPropagation(); onSelect(); }}>
-      <SatelliteModel scale={0.35} interactive={isTarget} />
-      {/* Target Marker */}
-      {isTarget && (
-        <mesh>
-          <sphereGeometry args={[1.2, 16, 16]} />
-          <meshBasicMaterial color="#00d4ff" wireframe transparent opacity={0.5} />
-        </mesh>
-      )}
+    <group>
+      {/* Orbital Trajectory Layer */}
+      <group position={earthPos} rotation={[incl, 0, 0]}>
+         <mesh rotation={[Math.PI / 2, 0, 0]}>
+           <ringGeometry args={[orbitRadius - 0.02, orbitRadius + 0.02, 128]} />
+           <meshBasicMaterial color="#00ff88" transparent opacity={0.4} side={THREE.DoubleSide} />
+         </mesh>
+      </group>
+      
+      <group ref={satGroupRef} onClick={(e) => { e.stopPropagation(); onSelect(); }}>
+        <SatelliteModel scale={0.35} interactive={isTarget} />
+        {/* Target Marker */}
+        {isTarget && (
+          <mesh>
+            <sphereGeometry args={[1.2, 16, 16]} />
+            <meshBasicMaterial color="#00d4ff" wireframe transparent opacity={0.5} />
+          </mesh>
+        )}
+      </group>
     </group>
   );
 }
@@ -769,15 +781,28 @@ function CameraController({
   viewRadius,
   isFreeCam,
   controlsRef,
+  targetId,
 }: {
   targetPos: THREE.Vector3;
   targetRadius: number;
   viewRadius?: number;
   isFreeCam: boolean;
   controlsRef: React.RefObject<any>;
+  targetId: string;
 }) {
   const { camera } = useThree();
   const desiredCamOffset = useMemo(() => new THREE.Vector3(), []);
+  const prevTargetId = useRef(targetId);
+  const isTransitioning = useRef(false);
+
+  useEffect(() => {
+    if (prevTargetId.current !== targetId) {
+      isTransitioning.current = true;
+      prevTargetId.current = targetId;
+      // Reset transitioning flag after 2 seconds
+      setTimeout(() => { isTransitioning.current = false; }, 2000);
+    }
+  }, [targetId]);
 
   useFrame(() => {
     if (!controlsRef.current) return;
@@ -786,12 +811,9 @@ function CameraController({
       // Smoothly update controls target to follow object position
       controlsRef.current.target.lerp(targetPos, 0.08);
 
-      // Adjust camera distance based on viewRadius or radius
-      const idealDist = viewRadius ?? Math.max(targetRadius * 3.2, 4.5);
-      const currentDist = camera.position.distanceTo(controlsRef.current.target);
-
-      // Smooth zoom if too far or too close on initial target switch
-      if (Math.abs(currentDist - idealDist) > idealDist * 1.6) {
+      // Only auto-zoom if we recently switched targets, so we don't fight manual zoom
+      if (isTransitioning.current) {
+        const idealDist = viewRadius ?? Math.max(targetRadius * 3.2, 4.5);
         desiredCamOffset.copy(camera.position).sub(controlsRef.current.target).normalize().multiplyScalar(idealDist);
         camera.position.lerp(controlsRef.current.target.clone().add(desiredCamOffset), 0.06);
       }
@@ -889,6 +911,7 @@ export function UniverseScreen() {
           viewRadius={selectedData.viewRadius}
           isFreeCam={isFreeCam}
           controlsRef={controlsRef}
+          targetId={selectedId}
         />
 
         {/* 1. The Sun */}

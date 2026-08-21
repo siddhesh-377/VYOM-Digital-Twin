@@ -43,6 +43,7 @@ export function DispositionScreen() {
   const archiveMission = useMissionStore((s) => s.archiveMission);
   const config = useMissionStore((s) => s.config);
   const stats = useMissionStore((s) => s.stats);
+  const farewellAssessment = useMissionStore((s) => s.farewellAssessment);
   const [selected, setSelected] = useState<DispositionType | null>(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -63,7 +64,7 @@ export function DispositionScreen() {
       <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
-        style={{ textAlign: 'center', marginBottom: 48, maxWidth: 600 }}
+        style={{ textAlign: 'center', marginBottom: 24, maxWidth: 600 }}
       >
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, letterSpacing: '0.3em', color: 'rgba(0,212,255,0.6)', marginBottom: 16 }}>
           MISSION COMPLETE
@@ -76,9 +77,51 @@ export function DispositionScreen() {
         </p>
       </motion.div>
 
+      {/* VYOM AI Farewell Assessment Panel */}
+      {farewellAssessment && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          style={{
+            background: 'rgba(5,12,25,0.8)', border: '1px solid rgba(155,93,229,0.3)',
+            borderRadius: 12, padding: '16px 24px', marginBottom: 32, maxWidth: 700, width: '100%',
+            display: 'flex', flexDirection: 'column', gap: 12,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#9b5de5', letterSpacing: '0.15em' }}>VYOM AI DISPOSITION ASSESSMENT</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#00ff88' }}>CONFIDENCE: {(farewellAssessment.confidence * 100).toFixed(0)}%</span>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}>RECOMMENDED ACTION</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: '#fff' }}>
+                {DISPOSITIONS.find(d => d.type === farewellAssessment.recommended_option)?.name ?? 'UNKNOWN'}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}>RELIABILITY SCORE</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: '#00d4ff' }}>
+                {(farewellAssessment.readiness_score * 100).toFixed(1)}%
+              </div>
+            </div>
+          </div>
+          
+          <div style={{ marginTop: 4 }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}>DECISION FACTORS</div>
+            <ul style={{ margin: 0, paddingLeft: 16, fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>
+              {farewellAssessment.factors.map((f, i) => <li key={i}>{f}</li>)}
+            </ul>
+          </div>
+        </motion.div>
+      )}
+
       {/* Disposition options */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 20, width: '100%', maxWidth: 900, marginBottom: 40 }}>
-        {DISPOSITIONS.map((d, i) => (
+        {DISPOSITIONS.map((d, i) => {
+          const isRecommended = farewellAssessment?.recommended_option === d.type;
+          return (
           <motion.div
             key={d.type}
             initial={{ opacity: 0, y: 20 }}
@@ -86,16 +129,22 @@ export function DispositionScreen() {
             transition={{ delay: i * 0.15 }}
             onClick={() => !confirming && setSelected(d.type)}
             style={{
+              position: 'relative',
               padding: '32px 28px',
               background: selected === d.type ? `rgba(${d.color === '#00ff88' ? '0,255,136' : d.color === '#00d4ff' ? '0,212,255' : '155,93,229'},0.1)` : 'rgba(5,12,25,0.9)',
-              border: `1px solid ${selected === d.type ? d.color + '50' : 'rgba(255,255,255,0.07)'}`,
+              border: `1px solid ${selected === d.type ? d.color + '50' : isRecommended ? 'rgba(155,93,229,0.5)' : 'rgba(255,255,255,0.07)'}`,
               borderRadius: 14,
               cursor: confirming ? 'default' : 'pointer',
               transition: 'all 0.3s',
               transform: selected === d.type ? 'scale(1.02)' : 'scale(1)',
-              boxShadow: selected === d.type ? `0 0 40px ${d.color}15` : 'none',
+              boxShadow: selected === d.type ? `0 0 40px ${d.color}15` : isRecommended ? '0 0 20px rgba(155,93,229,0.1)' : 'none',
             }}
           >
+            {isRecommended && (
+              <div style={{ position: 'absolute', top: -10, left: 24, background: '#9b5de5', color: '#fff', fontSize: 8, fontFamily: 'var(--font-mono)', padding: '2px 8px', borderRadius: 4, letterSpacing: '0.1em' }}>
+                AI RECOMMENDED
+              </div>
+            )}
             <div style={{ fontSize: 40, marginBottom: 16 }}>{d.icon}</div>
             <div style={{
               fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700,
@@ -108,7 +157,7 @@ export function DispositionScreen() {
               {selected === d.type ? d.detail : d.description}
             </p>
           </motion.div>
-        ))}
+        )})}
       </div>
 
       {/* Mission stats summary */}

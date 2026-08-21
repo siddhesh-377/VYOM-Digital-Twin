@@ -26,6 +26,9 @@ import { ReplayScreen, CompletionScreen } from './components/screens/ReplayCompl
 import { DispositionScreen, FarewellScreen } from './components/screens/DispositionFarewellScreens';
 import { DigitalTwinScreen, EnvironmentScreen } from './components/screens/DigitalTwinEnvironmentScreens';
 
+import { MissionPlanningScreen } from './components/screens/MissionPlanningScreen';
+import { ArchitectureSelectionScreen } from './components/screens/ArchitectureSelectionScreen';
+
 const PAGE_VARIANTS = {
   initial: { opacity: 0 },
   animate: { opacity: 1, transition: { duration: 0.35, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] } },
@@ -71,6 +74,8 @@ function ScreenRouter() {
         {screen === 'launch-sequence' && <LaunchSequenceScreen />}
         {screen === 'mission-control' && <MissionControlScreen />}
         {screen === 'crew' && config?.type === 'human' && <CrewScreen />}
+        {screen === 'planning' && <MissionPlanningScreen />}
+        {screen === 'architecture' && <ArchitectureSelectionScreen />}
         {screen === 'digital-twin' && <DigitalTwinScreen />}
         {screen === 'orbit' && <OrbitScreen />}
         {screen === 'universe' && <UniverseScreen />}

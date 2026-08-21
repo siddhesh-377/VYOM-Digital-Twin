@@ -262,10 +262,95 @@ export interface ArchivedMission {
   blackBox: BlackBoxEvent[];
 }
 
+// ── v3.0 Types ──
+
+export type MissionPhase = 'pre-launch' | 'launch' | 'orbit-insertion' | 'cruise' | 'operations' | 'extended-ops' | 'end-of-life';
+
+export interface RecoveryProcedure {
+  id: string;
+  fault_type: string;
+  name: string;
+  description: string;
+  steps: string[];
+  estimated_time_s: number;
+  success_probability: number;
+  risk_level: 'low' | 'medium' | 'high';
+}
+
+export interface Incident {
+  id: string;
+  mission_day: number;
+  normalized_fault_category: string;
+  normalized_subsystem: string;
+  severity: string;
+  status: 'investigating' | 'diagnosed' | 'recovering' | 'resolved' | 'unresolved';
+  description: string;
+  detection_time: number;
+  diagnosis_time?: number;
+  decision_time?: number;
+  recovery_start?: number;
+  recovery_end?: number;
+  total_resolution_ms?: number;
+  recovery_mode: 'manual' | 'ai' | 'hybrid' | 'none';
+  procedures: RecoveryProcedure[];
+}
+
+export interface DailySummary {
+  mission_day: number;
+  health_avg: number;
+  health_min: number;
+  health_max: number;
+  incidents_count: number;
+  critical_events: number;
+  distance_traveled_km: number;
+  power_generated_wh: number;
+  data_transmitted_mb: number;
+  environment_classification: string;
+}
+
+export interface MissionRiskAssessment {
+  risk_score: number; // 0-100
+  risk_category: 'minimal' | 'low' | 'moderate' | 'high' | 'critical';
+  trend: 'stable' | 'increasing' | 'decreasing';
+  contributing_factors: Array<{ factor: string; impact: number }>;
+  recommendations: string[];
+}
+
+export interface SpacecraftArchitecture {
+  id: string;
+  name: string;
+  description: string;
+  type: string;
+  mass_kg: number;
+  power_capacity_w: number;
+  reliability_base: number;
+  redundancy_level: number;
+  propulsion_type: string;
+  cost_crore: number;
+}
+
+export interface FarewellAssessment {
+  readiness_score: number;
+  rul_days: number;
+  recommended_option: DispositionType;
+  monte_carlo_success_rate: number;
+  confidence: number;
+  factors: string[];
+}
+
+export interface Scenario {
+  id: string;
+  name: string;
+  description: string;
+  fault_type: string;
+  mitigation_strategy: string;
+}
+
 export interface MissionState {
   config: MissionConfig | null;
   satellite: SatelliteConfig | null;
   status: MissionStatus;
+  missionPhase: MissionPhase;
   controlMode: ControlMode;
   screen: AppScreen;
   missionDay: number;
@@ -275,12 +360,14 @@ export interface MissionState {
   estimatedLifetimeYears: number;
   reliabilityPercent: number;
   resourceReservePercent: number;
+  rulDays: number;
   telemetry: Telemetry | null;
   telemetryHistory: Telemetry[];
   crew: CrewMember[];
   environment: SpaceEnvironment;
   activeThreats: ThreatScenario[];
   threatHistory: ThreatScenario[];
+  incidents: Incident[];
   aiAnalysis: AIAnalysis;
   pendingActions: AutonomousAction[];
   completedActions: AutonomousAction[];
@@ -288,6 +375,10 @@ export interface MissionState {
   milestones: MissionObjectiveMilestone[];
   blackBox: BlackBoxEvent[];
   orbitTrail: OrbitPoint[];
+  trajectoryState?: any;
+  dailySummaries: DailySummary[];
+  riskAssessment?: MissionRiskAssessment;
+  farewellAssessment?: FarewellAssessment;
   stats: MissionStats;
   disposition: DispositionType | null;
   archivedMissions: ArchivedMission[];
@@ -305,6 +396,8 @@ export type AppScreen =
   | 'launch-sequence'
   | 'mission-control'
   | 'crew'
+  | 'planning'
+  | 'architecture'
   | 'digital-twin'
   | 'orbit'
   | 'universe'

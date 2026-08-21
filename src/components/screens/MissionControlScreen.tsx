@@ -316,14 +316,26 @@ export function MissionControlScreen() {
             </div>
           </div>
 
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.15em', color: 'rgba(255,255,255,0.35)', marginBottom: 3 }}>
-            OBJECTIVE PROGRESS ({Math.round(objectiveProgress)}%)
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.15em', color: 'rgba(255,255,255,0.35)', marginBottom: 3, display: 'flex', justifyContent: 'space-between' }}>
+            <span>OBJECTIVE PROGRESS ({Math.round(objectiveProgress)}%)</span>
+            <span style={{ color: '#00d4ff' }}>{useMissionStore.getState().missionPhase?.toUpperCase() ?? 'OPERATIONS'}</span>
           </div>
           <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, marginBottom: 6 }}>
             <div style={{ height: '100%', width: `${Math.max(2, objectiveProgress)}%`, background: 'linear-gradient(90deg, #00d4ff, #00ff88)', borderRadius: 2, transition: 'width 0.8s ease' }} />
           </div>
-          <div style={{ fontFamily: 'var(--font-body)', fontSize: 10, color: 'rgba(255,255,255,0.65)', lineHeight: 1.4 }}>
+          <div style={{ fontFamily: 'var(--font-body)', fontSize: 10, color: 'rgba(255,255,255,0.65)', lineHeight: 1.4, marginBottom: 8 }}>
             {config?.objective ?? 'Scientific observation and autonomous mission telemetry.'}
+          </div>
+
+          {/* Remaining Useful Life (RUL) */}
+          <div style={{
+            padding: '8px', background: 'rgba(0,255,136,0.05)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: 6, marginBottom: 8,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+          }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.35)' }}>EST. RUL:</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#00ff88', fontWeight: 700 }}>
+              {Math.max(0, useMissionStore.getState().rulDays).toFixed(1)} DAYS
+            </span>
           </div>
         </div>
 

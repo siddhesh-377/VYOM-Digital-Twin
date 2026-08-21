@@ -97,7 +97,7 @@ export function MissionTimeScreen() {
           style={{ background: 'rgba(5,12,25,0.92)', border: '1px solid rgba(0,212,255,0.12)', borderRadius: 12, padding: '24px', marginBottom: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.2em', color: 'rgba(0,212,255,0.7)' }}>
-              MISSION LIFECYCLE &amp; OBJECTIVE PROGRESS
+              MISSION LIFECYCLE · {useMissionStore.getState().missionPhase?.toUpperCase()}
             </div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#00d4ff' }}>
               {Math.round(objectiveProgress)}% COMPLETE
@@ -114,7 +114,7 @@ export function MissionTimeScreen() {
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.35)' }}>LAUNCH T-0</span>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.35)' }}>
-              EST. {estimatedLifetimeYears} YRS LIFETIME
+              EST. RUL: {Math.max(0, useMissionStore.getState().rulDays).toFixed(1)} DAYS
             </span>
           </div>
         </motion.div>

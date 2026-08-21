@@ -142,8 +142,34 @@ class BackendWebSocketService {
         if (typeof p?.objectiveProgress === 'number') {
           store.setObjectiveProgress(p.objectiveProgress);
         }
+        if (p?.missionPhase) {
+          useMissionStore.setState({ missionPhase: p.missionPhase });
+        }
         if (p?.status && p.status !== store.status) {
           if (p.status === 'completed') store.completeMission();
+        }
+        break;
+      }
+      
+      case 'INCIDENT_UPDATE': {
+        const inc = payload as any;
+        if (inc && inc.id) {
+          const current = store.incidents;
+          const exists = current.findIndex(i => i.id === inc.id);
+          if (exists >= 0) {
+            const next = [...current];
+            next[exists] = inc;
+            useMissionStore.setState({ incidents: next });
+          } else {
+            useMissionStore.setState({ incidents: [...current, inc] });
+          }
+        }
+        break;
+      }
+      
+      case 'DAILY_SUMMARY': {
+        if (payload) {
+          useMissionStore.setState({ dailySummaries: [...store.dailySummaries, payload as any] });
         }
         break;
       }
@@ -318,6 +344,31 @@ export async function injectFaultViaBackend(
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+/** Submit a manual recovery action for an incident. */
+export async function submitManualActionViaBackend(
+  missionId: string,
+  incidentId: string,
+  actionType: string,
+  params: Record<string, any> = {}
+): Promise<{ success: boolean; result?: string; error?: string }> {
+  try {
+    const res = await fetch(`${BACKEND_API_URL}/api/missions/${missionId}/incidents/${incidentId}/manual-recovery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action_type: actionType, parameters: params }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      console.warn('[VYOM API] Manual action rejected:', err);
+      return { success: false, error: err };
+    }
+    const data = await res.json();
+    return { success: true, result: data.action_result };
+  } catch (e) {
+    return { success: false, error: String(e) };
   }
 }
 

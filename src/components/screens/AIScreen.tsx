@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
 import { threatEngine } from '../../engines/ThreatEngine';
-import { backendWS, injectFaultViaBackend } from '../../services/BackendWebSocketService';
+import { backendWS, injectFaultViaBackend, submitManualActionViaBackend } from '../../services/BackendWebSocketService';
 
 const RISK_COLORS: Record<string, string> = {
   low:      '#00ff88',
@@ -35,6 +35,7 @@ const DEFAULT_9_STEPS = [
 export function AIScreen() {
   const ai           = useMissionStore((s) => s.aiAnalysis);
   const activeThreats = useMissionStore((s) => s.activeThreats);
+  const storeIncidents = useMissionStore((s) => s.incidents);
   const controlMode  = useMissionStore((s) => s.controlMode);
   const setControlMode = useMissionStore((s) => s.setControlMode);
   const config       = useMissionStore((s) => s.config);
@@ -355,19 +356,48 @@ export function AIScreen() {
               </div>
             )}
 
-            {/* Active threats */}
-            {activeThreats.length > 0 && (
+            {/* Active threats (v3.0 Incidents) */}
+            {storeIncidents.filter(inc => inc.status !== 'resolved').length > 0 && (
               <div style={{ padding: '16px', background: 'rgba(5,12,25,0.9)', border: '1px solid rgba(255,45,85,0.25)', borderRadius: 10 }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#ff2d55', letterSpacing: '0.1em', marginBottom: 10 }}>
-                  ACTIVE FAULTS ({activeThreats.length})
+                  ACTIVE INCIDENTS ({storeIncidents.filter(inc => inc.status !== 'resolved').length})
                 </div>
-                {activeThreats.map((t) => (
-                  <div key={t.id} style={{ padding: '8px 10px', background: 'rgba(255,45,85,0.07)', border: '1px solid rgba(255,45,85,0.2)', borderRadius: 6, marginBottom: 6 }}>
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, color: '#fff', fontWeight: 700 }}>{t.name}</div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>{t.description}</div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#ff2d55', marginTop: 3, letterSpacing: '0.1em' }}>
-                      SEVERITY: {t.severity?.toUpperCase?.() ?? 'HIGH'}
+                {storeIncidents.filter(inc => inc.status !== 'resolved').map((inc) => (
+                  <div key={inc.id} style={{ padding: '12px', background: 'rgba(255,45,85,0.07)', border: '1px solid rgba(255,45,85,0.2)', borderRadius: 6, marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#fff', fontWeight: 700 }}>{inc.normalized_fault_category.replace(/_/g, ' ').toUpperCase()}</div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#ff2d55', letterSpacing: '0.1em' }}>{inc.severity.toUpperCase()}</div>
                     </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.45)', marginTop: 4, marginBottom: 8 }}>{inc.description}</div>
+                    <div style={{ display: 'flex', gap: 10, fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.3)', marginBottom: 12 }}>
+                      <span>STATUS: <strong style={{color: '#fff'}}>{inc.status.toUpperCase()}</strong></span>
+                      <span>SUBSYSTEM: <strong style={{color: '#fff'}}>{inc.normalized_subsystem.toUpperCase()}</strong></span>
+                    </div>
+
+                    {controlMode === 'manual' && inc.procedures && inc.procedures.length > 0 && (
+                      <div style={{ borderTop: '1px solid rgba(255,45,85,0.2)', paddingTop: 10 }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#ff8c00', letterSpacing: '0.1em', marginBottom: 6 }}>MANUAL RECOVERY PROCEDURES</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {inc.procedures.map((proc, idx) => (
+                            <button
+                              key={idx}
+                              onClick={async () => {
+                                if (config?.id) {
+                                  await submitManualActionViaBackend(config.id, inc.id, proc.name, { proc_id: proc.id });
+                                }
+                              }}
+                              style={{
+                                padding: '8px', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: 4,
+                                color: '#ff8c00', fontFamily: 'var(--font-mono)', fontSize: 9, textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s'
+                              }}
+                            >
+                              <div style={{ fontWeight: 700, marginBottom: 2 }}>{proc.name}</div>
+                              <div style={{ fontSize: 7.5, color: 'rgba(255,140,0,0.6)' }}>Success Prob: {(proc.success_probability * 100).toFixed(0)}% | Est Time: {proc.estimated_time_s}s</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -5,7 +5,9 @@ import type { AppScreen } from '../../types/mission';
 const BASE_NAV_ITEMS: { screen: AppScreen; label: string; icon: string; humanOnly?: boolean }[] = [
   { screen: 'mission-control', label: 'MISSION CONTROL', icon: '⬡' },
   { screen: 'crew', label: 'CREW VITALS', icon: '👨‍🚀', humanOnly: true },
+  { screen: 'planning', label: 'PLANNING', icon: '📅' },
   { screen: 'digital-twin', label: 'DIGITAL TWIN', icon: '◈' },
+  { screen: 'architecture', label: 'ARCHITECTURE', icon: '🏗️' },
   { screen: 'orbit', label: 'TRAJECTORY', icon: '○' },
   { screen: 'universe', label: 'UNIVERSE', icon: '✦' },
   { screen: 'telemetry', label: 'TELEMETRY', icon: '≋' },

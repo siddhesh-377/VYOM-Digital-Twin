@@ -11,7 +11,9 @@ from typing import Dict, Set, Any, Optional, List
 from sqlalchemy.orm import Session
 
 from core.database import SessionLocal, TelemetryRecord, BlackBoxEvent as BBEvent, \
-    Mission, ActiveFault as FaultRecord, MissionSnapshot
+    Mission, ActiveFault as FaultRecord, MissionSnapshot, \
+    Incident as IncidentRecord, CrewHealthRecord, DailySummary, \
+    MissionRiskHistory, ScheduledActivity, MissionObjective as MissionObjectiveModel
 from engines.spacecraft_state import SpacecraftState, SubsystemHealth
 from engines.physics.orbital import default_leo_state, propagate, OrbitalState
 from engines.environment_engine import EnvironmentEngine
@@ -21,6 +23,14 @@ from engines.anomaly_detector import AnomalyDetector
 from engines.ai_guardian import AIGuardian
 from engines.command_engine import CommandEngine
 from engines.recovery_engine import RecoveryEngine
+from engines.incident_engine import IncidentEngine
+from engines.crew_health_engine import CrewHealthEngine
+from engines.risk_engine import RiskEngine
+from engines.trajectory_engine import TrajectoryEngine
+from engines.rul_engine import RULEngine
+from engines.farewell_engine import FarewellEngine
+from engines.daily_summary_engine import DailySummaryEngine
+from engines.scenario_engine import ScenarioEngine
 
 logger = logging.getLogger("vyom")
 
@@ -54,10 +64,21 @@ class MissionSimulation:
         self.ai_guardian  = AIGuardian()
         self.cmd_engine   = CommandEngine(mission_id)
         self.recovery_eng = RecoveryEngine()
+        
+        # v3.0 Engines
+        self.incident_engine = IncidentEngine()
+        self.crew_health_engine = CrewHealthEngine()
+        self.risk_engine = RiskEngine()
+        self.trajectory_engine = TrajectoryEngine()
+        self.rul_engine = RULEngine()
+        self.farewell_engine = FarewellEngine()
+        self.daily_summary_engine = DailySummaryEngine()
+        self.scenario_engine = ScenarioEngine()
 
         # Timing
         self.elapsed_sim_s: float = 0.0
         self.mission_day: float = 0.0
+        self.current_day_int: int = 0
         self._last_db_write_s: float = 0.0
         self._last_snapshot_s: float = 0.0
         self._last_ai_check_s: float = 0.0
@@ -70,6 +91,7 @@ class MissionSimulation:
         self.objective_progress: float = 2.0
         self.milestones_completed: set = set()
         self.status: str = "active"
+        self.mission_phase: str = "pre-launch"
 
         # Orbit trail (last 600 points for frontend)
         self.orbit_trail: List[Dict] = []
@@ -114,9 +136,37 @@ class MissionSimulation:
         self.mission_day = self.elapsed_sim_s / (24 * 3600)
         self.state.elapsed_sim_s = self.elapsed_sim_s
         self.state.mission_day = self.mission_day
+        
+        # Check integer day transition
+        new_day_int = int(self.mission_day)
+        if new_day_int > self.current_day_int:
+            # Generate daily summary and persist
+            db = SessionLocal()
+            try:
+                summary = self.daily_summary_engine.generate_summary(self.mission_id, self.current_day_int)
+                db_summary = DailySummary(
+                    mission_id=self.mission_id,
+                    mission_day=self.current_day_int,
+                    summary_json=summary,
+                    orbital_path_json=self.daily_summary_engine.get_orbital_path(self.current_day_int),
+                    created_at=int(time.time() * 1000)
+                )
+                db.add(db_summary)
+                db.commit()
+                if self.broadcast_callback:
+                    await self.broadcast_callback([{"type": "DAILY_SUMMARY", "payload": summary}])
+            except Exception as e:
+                logger.error(f"Failed to generate daily summary: {e}")
+            finally:
+                db.close()
+            self.current_day_int = new_day_int
 
         # ── 2. Orbital mechanics ─────────────────────────────────────────────
         self.state.orbit = propagate(self.state.orbit, sim_dt_s, self.elapsed_sim_s)
+        self.trajectory_engine.record_actual_point(
+            self.mission_day, self.state.orbit.latitude_deg, self.state.orbit.longitude_deg, 
+            self.state.orbit.altitude_km, self.state.orbit.velocity_kms
+        )
 
         # ── 3. Environment ───────────────────────────────────────────────────
         env = self.env_engine.tick(
@@ -129,6 +179,15 @@ class MissionSimulation:
 
         # ── 5. Telemetry physics ─────────────────────────────────────────────
         self.telem_engine.tick(self.state, env, sim_dt_s)
+        
+        # ── Crew Health Update ──
+        if self.config.get("crew_json"):
+            # Initialize on first tick
+            if not self.crew_health_engine.crew_state:
+                self.crew_health_engine.initialize_crew(self.config.get("crew_json"))
+            crew_vitals = self.crew_health_engine.tick(sim_dt_s, self.mission_day, env.__dict__, self.fault_engine.active_faults)
+            # Update state crew array
+            self.state.crew = self.crew_health_engine.to_snapshot_list()
 
         # ── 6. Anomaly detection ─────────────────────────────────────────────
         anomalies = self.anomaly_det.detect(self.state, sim_dt_s)
@@ -139,6 +198,16 @@ class MissionSimulation:
             self._last_ai_check_s = self.elapsed_sim_s
             diagnosis = self.ai_guardian.run_pipeline(anomalies, self.state)
             ai_analysis = self.ai_guardian.build_ai_analysis(diagnosis, anomalies)
+            
+            # Find associated incident (if any)
+            active_faults = self.fault_engine.active_faults
+            for fault in active_faults:
+                if getattr(fault, 'incident_id', None):
+                    self.incident_engine.record_diagnosis(fault.incident_id, ai_analysis)
+                    # Broadcast incident update
+                    if self.broadcast_callback:
+                        incident = self.incident_engine.get_incident(fault.incident_id)
+                        asyncio.create_task(self.broadcast_callback([{"type": "INCIDENT_UPDATE", "payload": incident}]))
 
             # Auto-execute commands if diagnosis found
             if diagnosis and self.config.get("control_mode", "autonomous") == "autonomous":
@@ -149,6 +218,13 @@ class MissionSimulation:
                     )
                 self._command_executed_at = self.elapsed_sim_s
                 self.recovery_eng.begin_monitoring(diagnosis.root_cause, self.elapsed_sim_s)
+                
+                # Update incident for auto-recovery
+                for fault in active_faults:
+                    if getattr(fault, 'incident_id', None):
+                        self.incident_engine.record_decision(fault.incident_id, "ai", "Autonomous Execution")
+                        self.incident_engine.start_recovery(fault.incident_id)
+                        
         elif not anomalies:
             ai_analysis = self.ai_guardian.build_ai_analysis(None, [])
 
@@ -163,12 +239,28 @@ class MissionSimulation:
                 await self._log_event("recovery", "nominal",
                                       f"Recovery confirmed for {fault_type} — all telemetry nominal",
                                       "Recovery Engine")
-                # Clear corresponding fault
+                # Clear corresponding fault and update incident
+                for fault in self.fault_engine.active_faults:
+                    if fault.fault_type == fault_type and getattr(fault, 'incident_id', None):
+                        self.incident_engine.complete_recovery(fault.incident_id, success=True)
+                        if self.broadcast_callback:
+                            incident = self.incident_engine.get_incident(fault.incident_id)
+                            asyncio.create_task(self.broadcast_callback([{"type": "INCIDENT_UPDATE", "payload": incident}]))
+                
                 self.fault_engine.mitigate_by_type(fault_type)
                 self.state.safe_mode = False
 
-        # ── 10. Objective progress ─────────────────────────────────────────────
+        # ── 10. Objective & Risk & RUL progress ──────────────────────────────
         self._update_objective()
+        
+        # Calculate Risk and RUL every 10 ticks to save CPU
+        if tick_count % 10 == 0:
+            rul_data = self.rul_engine.estimate_rul(self.state, self.fault_engine.active_faults, env.__dict__, self.mission_day)
+            risk_data = self.risk_engine.calculate_risk(self.state, env.__dict__, self.fault_engine.active_faults, [], self.mission_day, rul_data["rul_days"], bool(self.config.get("crew_json")))
+            
+            # Accumulate for daily summary
+            orbit_pt = {"lat": self.state.orbit.latitude_deg, "lng": self.state.orbit.longitude_deg, "alt": self.state.orbit.altitude_km}
+            self.daily_summary_engine.accumulate_tick(self.mission_day, self.state.__dict__, env.__dict__, self.crew_health_engine.crew_state, risk_data, self.fault_engine.active_faults, orbit_pt)
 
         # ── 11. Orbit trail ────────────────────────────────────────────────────
         self._orbit_trail_counter += 1
@@ -186,6 +278,26 @@ class MissionSimulation:
         if self.elapsed_sim_s - self._last_db_write_s >= DB_WRITE_EVERY_S:
             self._last_db_write_s = self.elapsed_sim_s
             await self._persist_telemetry()
+            
+            # Add risk and crew health to DB every telemetry write cycle (roughly)
+            if tick_count % int(DB_WRITE_EVERY_S * TICK_RATE_HZ) == 0:
+                db = SessionLocal()
+                try:
+                    # Save Risk
+                    risk_data = self.risk_engine.calculate_risk(self.state, env.__dict__, self.fault_engine.active_faults, [], self.mission_day, 365.0, False)
+                    db_risk = MissionRiskHistory(mission_id=self.mission_id, mission_day=self.mission_day, timestamp=int(time.time() * 1000), risk_score=risk_data["risk_score"], risk_category=risk_data["risk_category"], contributing_factors=risk_data["contributing_factors"], trend=risk_data["trend"])
+                    db.add(db_risk)
+                    
+                    # Save Crew Health
+                    if self.crew_health_engine.crew_state:
+                        for crew_rec in self.crew_health_engine.to_snapshot_list():
+                            crew_db = CrewHealthRecord(mission_id=self.mission_id, mission_day=self.mission_day, timestamp=int(time.time()*1000), **{k:v for k,v in crew_rec.items() if hasattr(CrewHealthRecord, k)})
+                            db.add(crew_db)
+                    db.commit()
+                except Exception as e:
+                    pass
+                finally:
+                    db.close()
 
         if self.elapsed_sim_s - self._last_snapshot_s >= SNAPSHOT_EVERY_S:
             self._last_snapshot_s = self.elapsed_sim_s
@@ -204,6 +316,7 @@ class MissionSimulation:
                         "timeMultiplier": self.time_multiplier,
                         "objectiveProgress": round(self.objective_progress, 2),
                         "status": self.status,
+                        "missionPhase": self.mission_phase
                     }
                 },
                 {
