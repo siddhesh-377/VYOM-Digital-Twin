@@ -29,6 +29,7 @@ import { DigitalTwinScreen, EnvironmentScreen } from './components/screens/Digit
 
 import { MissionPlanningScreen } from './components/screens/MissionPlanningScreen';
 import { ArchitectureSelectionScreen } from './components/screens/ArchitectureSelectionScreen';
+import { DangerDecisionScreen } from './components/screens/DangerDecisionScreen';
 
 const PAGE_VARIANTS = {
   initial: { opacity: 0 },
@@ -83,6 +84,7 @@ function ScreenRouter() {
         {screen === 'telemetry' && <TelemetryScreen />}
         {screen === 'environment' && <EnvironmentScreen />}
         {screen === 'scenarios' && <ScenariosScreen />}
+        {screen === 'danger-decision' && <DangerDecisionScreen />}
         {screen === 'ai' && <AIScreen />}
         {screen === 'mission-time' && <MissionTimeScreen />}
         {screen === 'timeline' && <TimelineScreen />}

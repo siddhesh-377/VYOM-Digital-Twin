@@ -130,16 +130,16 @@ export function CrewScreen() {
         details: 'Hard Upper Torso (HUT) chest cuirass, ECG lead telemetry, pulmonary gas exchange, and Displays and Control Module (DCM).',
       },
       plss: {
-        title: 'Primary Life Support System (PLSS Backpack)',
-        temp: 16.4,
-        tempLimits: [12.0, 22.0],
-        pressure: selectedMember.suitPressureKpa ?? 29.6,
-        pressureLimits: [28.0, 32.0],
-        fatigue: 0,
-        radiation: rad * 0.7,
-        loadStatus: (selectedMember.suitPressureKpa ?? 29.6) < 26 ? 'critical' : 'nominal',
-        recommendation: (selectedMember.suitPressureKpa ?? 29.6) < 26 ? 'EMERGENCY: Secondary O2 actuator activation required. Return to airlock.' : 'PLSS dual oxygen tanks and sublimator loop operating optimally.',
-        details: 'Houses primary and secondary high-pressure O2 cylinders, water sublimator radiator, LiOH CO2 scrubber, and telemetry transceiver.',
+        title: 'Upper Back — Thoracic Spine & Musculature',
+        temp: core - 0.3,
+        tempLimits: [36.0, 37.2],
+        pressure: (selectedMember.suitPressureKpa ?? 101.3) / 12,
+        pressureLimits: [5, 18],
+        fatigue: fatigue * 0.9,
+        radiation: rad * 0.75,
+        loadStatus: fatigue > 80 ? 'caution' : 'nominal',
+        recommendation: fatigue > 80 ? 'Elevated paraspinal tension detected. Recommend postural rest cycle and thoracic decompression exercises.' : 'Erector spinae and trapezius groups within normal contractile range. Dorsal perfusion adequate.',
+        details: 'Thoracic vertebrae T1–T12, erector spinae muscle group, rhomboids, trapezius, paraspinal tension sensors, and dorsal nerve root monitoring.',
       },
       abdomen: {
         title: 'Lower Abdomen & Core Visceral Hydration',
@@ -468,19 +468,8 @@ export function CrewScreen() {
             })}
           </div>
 
-          {/* 3D Scene Interactive Viewport Toggles */}
+          {/* Digital Twin Viewport Toggles */}
           <div style={{ display: 'flex', gap: 6 }}>
-            <button
-              onClick={() => setXRay(!xRay)}
-              style={{
-                padding: '5px 10px', borderRadius: 4, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 8.5,
-                background: xRay ? 'rgba(155,93,229,0.3)' : 'rgba(0,0,0,0.3)',
-                border: `1px solid ${xRay ? '#9b5de5' : 'rgba(255,255,255,0.1)'}`,
-                color: xRay ? '#9b5de5' : 'rgba(255,255,255,0.5)',
-              }}
-            >
-              👁️ X-RAY ANATOMY {xRay ? 'ON' : 'OFF'}
-            </button>
             <button
               onClick={() => setShowHotspots(!showHotspots)}
               style={{
@@ -490,18 +479,7 @@ export function CrewScreen() {
                 color: showHotspots ? '#00d4ff' : 'rgba(255,255,255,0.5)',
               }}
             >
-              📍 3D HOTSPOTS {showHotspots ? 'ON' : 'OFF'}
-            </button>
-            <button
-              onClick={() => setAutoRotate(!autoRotate)}
-              style={{
-                padding: '5px 10px', borderRadius: 4, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 8.5,
-                background: autoRotate ? 'rgba(0,255,136,0.2)' : 'rgba(0,0,0,0.3)',
-                border: `1px solid ${autoRotate ? '#00ff88' : 'rgba(255,255,255,0.1)'}`,
-                color: autoRotate ? '#00ff88' : 'rgba(255,255,255,0.5)',
-              }}
-            >
-              🔄 360° ORBIT {autoRotate ? 'ON' : 'OFF'}
+              📍 ANATOMY NODES {showHotspots ? 'ON' : 'OFF'}
             </button>
           </div>
         </div>
@@ -698,16 +676,13 @@ export function CrewScreen() {
           </div>
         </div>
 
-        {/* ─── CENTER COLUMN: 3D ASTRONAUT DIGITAL TWIN CANVAS ─── */}
+        {/* ─── CENTER COLUMN: 2D ASTRONAUT DIGITAL TWIN CANVAS ─── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <CrewAnatomyScene
             member={selectedMember}
             mode={activeMode}
             selectedRegion={selectedRegion}
             onSelectRegion={(id) => setSelectedRegion(id)}
-            xRay={xRay}
-            showHotspots={showHotspots}
-            autoRotate={autoRotate}
             height={560}
           />
 
@@ -731,7 +706,7 @@ export function CrewScreen() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {reg.replace('_', ' ').toUpperCase()}
+                {reg === 'plss' ? 'UPPER BACK' : reg.replace('_', ' ').toUpperCase()}
               </button>
             ))}
           </div>

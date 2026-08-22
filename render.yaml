@@ -1,0 +1,40 @@
+services:
+  # ── VYOM Frontend Static Site ──────────────────────────────────────────────
+  - type: web
+    name: vyom-digital-twin-frontend
+    env: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=0, must-revalidate
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_BACKEND_API_URL
+        fromService:
+          type: web
+          name: vyom-digital-twin-backend
+          property: host
+      - key: VITE_BACKEND_WS_URL
+        fromService:
+          type: web
+          name: vyom-digital-twin-backend
+          property: host
+
+  # ── VYOM FastAPI Authoritative Physics Backend ────────────────────────────
+  - type: web
+    name: vyom-digital-twin-backend
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r vyom-backend/requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --app-dir vyom-backend
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: CORS_ORIGINS
+        value: '["*"]'

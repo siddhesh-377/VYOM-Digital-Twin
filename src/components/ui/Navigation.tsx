@@ -14,6 +14,7 @@ const BASE_NAV_ITEMS: { screen: AppScreen; label: string; icon: string; humanOnl
   { screen: 'telemetry', label: 'TELEMETRY', icon: '≋' },
   { screen: 'environment', label: 'ENVIRONMENT', icon: '◐' },
   { screen: 'scenarios', label: 'SCENARIOS', icon: '⚡' },
+  { screen: 'danger-decision', label: 'DANGER SIM', icon: '⚠️' },
   { screen: 'ai', label: 'VYOM AI', icon: '◉' },
   { screen: 'mission-time', label: 'MISSION TIME', icon: '◷' },
   { screen: 'timeline', label: 'TIMELINE', icon: '⌛' },

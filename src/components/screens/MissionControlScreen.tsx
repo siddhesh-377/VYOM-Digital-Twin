@@ -199,14 +199,22 @@ export function MissionControlScreen() {
         </div>
 
         {activeThreats.length > 0 && (
-          <div style={{
-            padding: '3px 10px', background: 'rgba(255,45,85,0.15)',
-            border: '1px solid rgba(255,45,85,0.4)', borderRadius: 4,
-            fontFamily: 'var(--font-mono)', fontSize: 9, color: '#ff2d55',
-            letterSpacing: '0.1em', animation: 'threat-alert 1s ease-in-out infinite',
-          }}>
-            ⚠ {activeThreats.length} THREAT ACTIVE
-          </div>
+          <button
+            onClick={() => setScreen('danger-decision')}
+            style={{
+              padding: '3px 10px', background: 'rgba(255,45,85,0.2)',
+              border: '1px solid #ff2d55', borderRadius: 4,
+              fontFamily: 'var(--font-mono)', fontSize: 9, color: '#ff2d55',
+              letterSpacing: '0.1em', animation: 'threat-alert 1s ease-in-out infinite',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+            }}
+            title="Open AI-Powered Danger Simulation & Decision Support"
+          >
+            <span>⚠️ {activeThreats.length} THREAT ACTIVE</span>
+            <span style={{ background: '#ff2d55', color: '#fff', padding: '1px 5px', borderRadius: 2, fontSize: 7.5, fontWeight: 900 }}>
+              AI DANGER SIM →
+            </span>
+          </button>
         )}
 
         {/* Ultra Warp Time Multipliers */}

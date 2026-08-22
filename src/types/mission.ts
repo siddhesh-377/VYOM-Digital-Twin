@@ -479,6 +479,7 @@ export type AppScreen =
   | 'telemetry'
   | 'environment'
   | 'scenarios'
+  | 'danger-decision'
   | 'ai'
   | 'mission-time'
   | 'timeline'
