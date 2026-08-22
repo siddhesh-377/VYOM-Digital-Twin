@@ -6,6 +6,7 @@ import { Earth, StarField } from '../three/SpaceScene';
 import { SatelliteModel, OrbitLine, GroundTrack } from '../three/SatelliteScene';
 import { useRef, useMemo, useState } from 'react';
 import * as THREE from 'three';
+import { OrbitalTrackingPanel } from '../three/OrbitalTrackingPanel';
 
 // Atmospheric Layers Visualization with labeled shell boundaries
 function EarthAtmosphericShells() {
@@ -322,6 +323,9 @@ export function OrbitScreen() {
         }}>
           REAL-TIME KEPLERIAN KINEMATICS · ATMOSPHERIC ESCAPE VISUALIZATION · DRAG ORBIT TO INSPECT
         </div>
+
+        {/* v3.0 additive: live orbital data tracking + daily replay + planned-vs-actual */}
+        <OrbitalTrackingPanel />
       </div>
     </div>
   );

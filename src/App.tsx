@@ -20,6 +20,7 @@ import { ScenariosScreen } from './components/screens/ScenariosScreen';
 import { AIScreen } from './components/screens/AIScreen';
 import { BlackBoxScreen } from './components/screens/BlackBoxScreen';
 import { MissionTimeScreen } from './components/screens/MissionTimeScreen';
+import { TimelineScreen } from './components/screens/TimelineScreen';
 import { ReportsScreen } from './components/screens/ReportsScreen';
 import { ArchiveScreen } from './components/screens/ArchiveScreen';
 import { ReplayScreen, CompletionScreen } from './components/screens/ReplayCompletionScreens';
@@ -84,6 +85,7 @@ function ScreenRouter() {
         {screen === 'scenarios' && <ScenariosScreen />}
         {screen === 'ai' && <AIScreen />}
         {screen === 'mission-time' && <MissionTimeScreen />}
+        {screen === 'timeline' && <TimelineScreen />}
         {screen === 'blackbox' && <BlackBoxScreen />}
         {screen === 'replay' && <ReplayScreen />}
         {screen === 'reports' && <ReportsScreen />}

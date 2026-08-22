@@ -4,7 +4,8 @@ import type {
   MissionState, AppScreen, MissionConfig, SatelliteConfig, Telemetry,
   ThreatScenario, BlackBoxEvent, OrbitPoint, AIAnalysis, AutonomousAction,
   SpaceEnvironment, MissionObjectiveMilestone, ArchivedMission, ControlMode,
-  DispositionType, MissionStats, MissionType, CrewMember, MissionDestination
+  DispositionType, MissionStats, MissionType, CrewMember, MissionDestination,
+  CrewVitalSample
 } from '../types/mission';
 
 const defaultEnvironment: SpaceEnvironment = {
@@ -40,6 +41,51 @@ const defaultStats: MissionStats = {
   commUptimePercent: 100,
   orbitsCompleted: 0,
 };
+
+/**
+ * Merge backend crew health snapshots (snake_case, keyed by role) into the
+ * local CrewMember roster without losing local identity fields. All merged
+ * physiological values are SIMULATED estimates from the backend engine.
+ */
+function mergeBackendCrew(local: CrewMember[], backend: any): CrewMember[] {
+  if (!Array.isArray(backend) || backend.length === 0) return local;
+  return local.map((member) => {
+    const snap =
+      backend.find((b: any) => (b.role ?? '').toLowerCase() === member.role.toLowerCase()) ??
+      backend.find((b: any) => (b.name ?? '').toLowerCase() === member.name.toLowerCase());
+    if (!snap) return member;
+    const isEva = Boolean(snap.is_eva);
+    return {
+      ...member,
+      heartRateBpm: Math.round(snap.heart_rate_bpm ?? member.heartRateBpm),
+      spo2Percent: Math.round((snap.spo2_percent ?? member.spo2Percent) * 10) / 10,
+      respirationBpm: Math.round(snap.respiratory_rate_bpm ?? member.respirationBpm),
+      coreTempC: Math.round((snap.temperature_c ?? member.coreTempC) * 10) / 10,
+      suitPressureKpa: Math.round((snap.suit_pressure_kpa ?? member.suitPressureKpa) * 10) / 10,
+      radiationDoseMsv: Math.round((snap.radiation_dose_msv ?? member.radiationDoseMsv) * 1000) / 1000,
+      stressIndex: Math.round(snap.stress ?? member.stressIndex),
+      status: isEva ? 'eva' : (member.status === 'eva' ? 'nominal' : member.status),
+      activity: snap.activity ?? member.activity,
+      // v3.0 extended simulated vitals
+      bloodPressureSys: Math.round(snap.blood_pressure_sys ?? 0) || undefined,
+      bloodPressureDia: Math.round(snap.blood_pressure_dia ?? 0) || undefined,
+      fatigueIndex: Math.round(snap.fatigue ?? 0),
+      hydrationPercent: Math.round(snap.hydration ?? 0),
+      o2ExposureKpa: Math.round((snap.o2_exposure_kpa ?? 0) * 10) / 10 || undefined,
+      co2ExposurePpm: Math.round(snap.co2_exposure_ppm ?? 0) || undefined,
+      workloadIndex: Math.round(snap.workload ?? 0),
+      evaDurationMin: Math.round(snap.eva_duration_min ?? 0),
+      location: snap.location ?? (isEva ? 'EVA — Outside Spacecraft' : 'Command Module'),
+      spacecraftModule: snap.spacecraft_module ?? 'CM',
+      currentTask: snap.activity ?? member.activity,
+      taskDurationMin: Math.round(snap.task_duration_min ?? 0),
+      checklistStatus: snap.checklist_status ?? 'in-progress',
+      commStatus: snap.comm_status ?? 'nominal',
+      tetherStatus: isEva ? (snap.tether_status ?? 'attached') : undefined,
+      dataQuality: snap.data_quality ?? 'simulated',
+    } as CrewMember;
+  });
+}
 
 export const defaultCrew: CrewMember[] = [
   {
@@ -222,6 +268,10 @@ interface MissionStore extends MissionState {
   logEvent: (event: BlackBoxEvent) => void;
   pushOrbitPoint: (pt: OrbitPoint) => void;
   setTimeMultiplier: (m: number) => void;
+  pauseMission: () => void;
+  resumeMission: () => void;
+  resetSimulation: () => void;
+  pushCrewVitalSample: (memberId: string, sample: CrewVitalSample) => void;
   tickMission: (realDeltaMs: number) => void;
   updateStats: (partial: Partial<MissionStats>) => void;
   completeMission: () => void;
@@ -241,6 +291,8 @@ const initialState: MissionState = {
   missionDay: 0.1,
   missionStartTime: Date.now(),
   timeMultiplier: 1,
+  isPaused: false,
+  totalMissionDurationDays: 17,   // default: last milestone day for human mission
   elapsedRealMs: 0,
   estimatedLifetimeYears: 1.5,
   reliabilityPercent: 99.2,
@@ -249,6 +301,7 @@ const initialState: MissionState = {
   telemetry: defaultTelemetry,
   telemetryHistory: [defaultTelemetry],
   crew: defaultCrew,
+  crewVitalsHistory: {},
   environment: defaultEnvironment,
   activeThreats: [],
   threatHistory: [],
@@ -331,12 +384,17 @@ export const useMissionStore = create<MissionStore>()(
         const destination = cfg?.destination ?? 'lunar-surface';
         const milestones = buildMilestones(type, destination);
         const crewRoster = cfg?.crew && cfg.crew.length > 0 ? cfg.crew : defaultCrew;
+        const lastMilestoneDay = milestones.reduce((max, m) => Math.max(max, m.requiresDays), 17);
+        const totalDays = lastMilestoneDay + 2; // 2-day buffer after final milestone
 
         set({
           status: 'active',
           missionStartTime: Date.now(),
           missionDay: 0,
+          isPaused: false,
+          totalMissionDurationDays: totalDays,
           crew: crewRoster,
+          crewVitalsHistory: {},
           milestones,
           blackBox: [
             {
@@ -345,7 +403,7 @@ export const useMissionStore = create<MissionStore>()(
               missionDay: 0,
               eventType: 'milestone',
               severity: 'nominal',
-              description: `Mission "${cfg?.name ?? 'VYOM-MISSION'}" successfully launched from ${cfg?.launchSite?.name ?? 'Sriharikota'}. Destination: ${destination.toUpperCase().replace('-', ' ')}. Crew of ${crewRoster.length} aboard.`,
+              description: `Mission "${cfg?.name ?? 'VYOM-MISSION'}" successfully launched from ${cfg?.launchSite?.name ?? 'Sriharikota'}. Destination: ${destination.toUpperCase().replace('-', ' ')}. Human spaceflight crew aboard.`,
               source: 'Mission Launch Operations',
               immutable: true,
             },
@@ -364,7 +422,7 @@ export const useMissionStore = create<MissionStore>()(
         set((s) => ({
           telemetry: t,
           telemetryHistory: [...s.telemetryHistory.slice(-500), t],
-          crew: t.crew && t.crew.length > 0 ? t.crew : s.crew,
+          crew: mergeBackendCrew(s.crew, t.crew),
           stats: {
             ...s.stats,
             maxHealth: Math.max(s.stats.maxHealth, t.overallHealth),
@@ -439,9 +497,44 @@ export const useMissionStore = create<MissionStore>()(
 
       setTimeMultiplier: (timeMultiplier) => set({ timeMultiplier }),
 
+      pauseMission: () => set({ isPaused: true }),
+
+      resumeMission: () => set({ isPaused: false }),
+
+      resetSimulation: () => {
+        // Reset time-dependent state without wiping mission config
+        const s = get();
+        set({
+          missionDay: 0,
+          isPaused: false,
+          elapsedRealMs: 0,
+          objectiveProgress: 2,
+          milestones: s.milestones.map((m) => ({ ...m, completed: false, completedAt: undefined })),
+          crewVitalsHistory: {},
+          blackBox: s.blackBox.slice(0, 1),  // keep only the launch event
+          activeThreats: [],
+          threatHistory: [],
+          incidents: [],
+          stats: { ...defaultStats },
+        });
+      },
+
+      pushCrewVitalSample: (memberId, sample) =>
+        set((s) => {
+          const existing = s.crewVitalsHistory[memberId] ?? [];
+          const trimmed = existing.length >= 200 ? existing.slice(-199) : existing;
+          return {
+            crewVitalsHistory: {
+              ...s.crewVitalsHistory,
+              [memberId]: [...trimmed, sample],
+            },
+          };
+        }),
+
       tickMission: (realDeltaMs) =>
         set((s) => {
-          if (s.status === 'completed' || s.objectiveProgress >= 100) return {};
+          if (s.status === 'completed' || s.isPaused) return {};
+          if (s.objectiveProgress >= 100) return {};
           const simMs = realDeltaMs * s.timeMultiplier;
           const simDays = simMs / (1000 * 60 * 60 * 24);
           const newDay = s.missionDay + simDays;

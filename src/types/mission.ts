@@ -47,6 +47,23 @@ export interface CrewMember {
   stressIndex: number; // 0–100
   status: 'nominal' | 'elevated' | 'critical' | 'resting' | 'eva';
   activity: string;
+  // ── v3.0 Human Digital Twin additive fields (all SIMULATED estimates) ──
+  bloodPressureSys?: number;
+  bloodPressureDia?: number;
+  fatigueIndex?: number;      // 0-100
+  hydrationPercent?: number;  // 0-100
+  o2ExposureKpa?: number;
+  co2ExposurePpm?: number;
+  workloadIndex?: number;     // 0-100
+  evaDurationMin?: number;
+  location?: string;          // crew location / EVA position
+  spacecraftModule?: string;
+  currentTask?: string;
+  taskDurationMin?: number;
+  checklistStatus?: string;   // pending | in-progress | complete
+  commStatus?: string;        // nominal | degraded | lost
+  tetherStatus?: string;      // attached | detached (EVA only)
+  dataQuality?: string;       // simulated | estimated | real
 }
 
 export interface MissionConfig {
@@ -283,7 +300,7 @@ export interface Incident {
   normalized_fault_category: string;
   normalized_subsystem: string;
   severity: string;
-  status: 'investigating' | 'diagnosed' | 'recovering' | 'resolved' | 'unresolved';
+  status: 'open' | 'detected' | 'diagnosing' | 'recovering' | 'resolved' | 'failed' | 'investigating' | 'diagnosed' | 'unresolved';
   description: string;
   detection_time: number;
   diagnosis_time?: number;
@@ -293,6 +310,20 @@ export interface Incident {
   total_resolution_ms?: number;
   recovery_mode: 'manual' | 'ai' | 'hybrid' | 'none';
   procedures: RecoveryProcedure[];
+  // ── v3.0 additive fields (backend-authoritative) ──
+  raw_error?: string;
+  normalized_root_cause?: string;
+  confidence?: number;
+  ai_analysis?: Record<string, unknown>;
+  manual_actions?: Record<string, unknown>[];
+  fault_id?: string;
+  // Simulation-clock timeline (authoritative under time acceleration)
+  detection_sim_s?: number;
+  diagnosis_sim_s?: number;
+  decision_sim_s?: number;
+  recovery_start_sim_s?: number;
+  recovery_end_sim_s?: number;
+  total_resolution_sim_s?: number;
 }
 
 export interface DailySummary {
@@ -346,6 +377,23 @@ export interface Scenario {
   mitigation_strategy: string;
 }
 
+/** One historical physiological snapshot per crew member (SIMULATED estimates) */
+export interface CrewVitalSample {
+  missionDay: number;
+  timestamp: number;
+  heartRateBpm: number;
+  spo2Percent: number;
+  respirationBpm: number;
+  coreTempC: number;
+  stressIndex: number;
+  fatigueIndex: number;
+  hydrationPercent: number;
+  radiationDoseMsv: number;
+  bloodPressureSys?: number;
+  bloodPressureDia?: number;
+  workloadIndex?: number;
+}
+
 export interface MissionState {
   config: MissionConfig | null;
   satellite: SatelliteConfig | null;
@@ -356,6 +404,8 @@ export interface MissionState {
   missionDay: number;
   missionStartTime: number;
   timeMultiplier: number;
+  isPaused: boolean;
+  totalMissionDurationDays: number;
   elapsedRealMs: number;
   estimatedLifetimeYears: number;
   reliabilityPercent: number;
@@ -364,6 +414,8 @@ export interface MissionState {
   telemetry: Telemetry | null;
   telemetryHistory: Telemetry[];
   crew: CrewMember[];
+  /** Per-member physiological history (SIMULATED). Key = CrewMember.id */
+  crewVitalsHistory: Record<string, CrewVitalSample[]>;
   environment: SpaceEnvironment;
   activeThreats: ThreatScenario[];
   threatHistory: ThreatScenario[];
@@ -406,6 +458,7 @@ export type AppScreen =
   | 'scenarios'
   | 'ai'
   | 'mission-time'
+  | 'timeline'
   | 'blackbox'
   | 'replay'
   | 'reports'

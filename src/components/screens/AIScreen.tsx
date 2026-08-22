@@ -1,7 +1,8 @@
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
 import { threatEngine } from '../../engines/ThreatEngine';
-import { backendWS, injectFaultViaBackend, submitManualActionViaBackend } from '../../services/BackendWebSocketService';
+import { backendWS, injectFaultViaBackend, submitManualActionViaBackend, fetchIncidentProcedures } from '../../services/BackendWebSocketService';
 
 const RISK_COLORS: Record<string, string> = {
   low:      '#00ff88',
@@ -85,6 +86,28 @@ export function AIScreen() {
 
   // ── Evidence channels from backend ──────────────────────────────────────────
   const evidenceChannels: string[] = (ai as any).evidenceChannels ?? [];
+
+  // ── v3.0: Manual recovery procedures (fetched per active incident) ────────
+  const [proceduresByIncident, setProceduresByIncident] = useState<Record<string, any[]>>({});
+  const [pendingProc, setPendingProc] = useState<{ incidentId: string; proc: any } | null>(null);
+  const activeIncidents = storeIncidents.filter(inc => inc.status !== 'resolved' && inc.status !== 'failed');
+  const latestIncident = storeIncidents.length > 0 ? storeIncidents[storeIncidents.length - 1] : null;
+
+  useEffect(() => {
+    if (controlMode !== 'manual' || !config?.id) return;
+    activeIncidents.forEach(async (inc) => {
+      if (!proceduresByIncident[inc.id]) {
+        const procs = await fetchIncidentProcedures(config.id, inc.id);
+        setProceduresByIncident(prev => ({ ...prev, [inc.id]: procs }));
+      }
+    });
+  }, [controlMode, config?.id, activeIncidents.map(i => i.id).join(',')]);
+
+  const handleExecuteProcedure = async (incidentId: string, proc: any) => {
+    if (!config?.id) return;
+    await submitManualActionViaBackend(config.id, incidentId, proc.id, { confirmed: true, operator: 'Ground Control' });
+    setPendingProc(null);
+  };
 
   return (
     <div style={{ width: '100%', height: '100%', overflowY: 'auto', background: '#020409', padding: '28px 28px 80px' }}>
@@ -374,32 +397,111 @@ export function AIScreen() {
                       <span>SUBSYSTEM: <strong style={{color: '#fff'}}>{inc.normalized_subsystem.toUpperCase()}</strong></span>
                     </div>
 
-                    {controlMode === 'manual' && inc.procedures && inc.procedures.length > 0 && (
+                    {controlMode === 'manual' && (proceduresByIncident[inc.id] ?? inc.procedures ?? []).length > 0 && (
                       <div style={{ borderTop: '1px solid rgba(255,45,85,0.2)', paddingTop: 10 }}>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#ff8c00', letterSpacing: '0.1em', marginBottom: 6 }}>MANUAL RECOVERY PROCEDURES</div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#ff8c00', letterSpacing: '0.1em', marginBottom: 6 }}>VALIDATED MANUAL RECOVERY PROCEDURES</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {inc.procedures.map((proc, idx) => (
-                            <button
-                              key={idx}
-                              onClick={async () => {
-                                if (config?.id) {
-                                  await submitManualActionViaBackend(config.id, inc.id, proc.name, { proc_id: proc.id });
-                                }
-                              }}
-                              style={{
-                                padding: '8px', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: 4,
-                                color: '#ff8c00', fontFamily: 'var(--font-mono)', fontSize: 9, textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s'
-                              }}
-                            >
-                              <div style={{ fontWeight: 700, marginBottom: 2 }}>{proc.name}</div>
-                              <div style={{ fontSize: 7.5, color: 'rgba(255,140,0,0.6)' }}>Success Prob: {(proc.success_probability * 100).toFixed(0)}% | Est Time: {proc.estimated_time_s}s</div>
-                            </button>
-                          ))}
+                          {(proceduresByIncident[inc.id] ?? inc.procedures).map((proc: any) => {
+                            const viewOnly = proc.execution_mode === 'view-only';
+                            return (
+                              <button
+                                key={proc.id}
+                                disabled={viewOnly}
+                                onClick={() => setPendingProc({ incidentId: inc.id, proc })}
+                                style={{
+                                  padding: '8px', background: viewOnly ? 'rgba(255,255,255,0.03)' : 'rgba(255,140,0,0.1)',
+                                  border: `1px solid ${viewOnly ? 'rgba(255,255,255,0.12)' : 'rgba(255,140,0,0.3)'}`, borderRadius: 4,
+                                  color: viewOnly ? 'rgba(255,255,255,0.4)' : '#ff8c00', fontFamily: 'var(--font-mono)', fontSize: 9,
+                                  textAlign: 'left', cursor: viewOnly ? 'not-allowed' : 'pointer', transition: 'all 0.2s', opacity: viewOnly ? 0.7 : 1
+                                }}
+                              >
+                                <div style={{ fontWeight: 700, marginBottom: 2 }}>{proc.name}</div>
+                                <div style={{ fontSize: 7.5, color: viewOnly ? 'rgba(255,255,255,0.35)' : 'rgba(255,140,0,0.6)' }}>
+                                  {viewOnly
+                                    ? 'REFERENCE ONLY — critical severity: inspect procedure, execution not permitted'
+                                    : `EXECUTE AFTER CONFIRMATION | Risk: ${proc.risk_level} | Est: ${Math.round(proc.estimated_duration_s)}s`}
+                                </div>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* ── v3.0: Incident Resolution Timeline ── */}
+            {latestIncident && (
+              <div style={{ padding: '16px', background: 'rgba(5,12,25,0.9)', border: '1px solid rgba(155,93,229,0.2)', borderRadius: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#9b5de5', letterSpacing: '0.1em' }}>
+                    INCIDENT RESOLUTION TIMELINE
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 7.5, color: 'rgba(255,255,255,0.3)' }}>
+                    {latestIncident.id}
+                  </div>
+                </div>
+                {(() => {
+                  const inc = latestIncident;
+                  const phases = [
+                    { label: 'DETECTED', t: inc.detection_time, sim: (inc as any).detection_sim_s, color: '#ff2d55' },
+                    { label: 'DIAGNOSED', t: inc.diagnosis_time, sim: (inc as any).diagnosis_sim_s, color: '#ff8c00' },
+                    { label: 'DECISION', t: inc.decision_time, sim: (inc as any).decision_sim_s, color: '#9b5de5' },
+                    { label: 'RECOVERY START', t: inc.recovery_start, sim: (inc as any).recovery_start_sim_s, color: '#00d4ff' },
+                    { label: 'RESOLVED', t: inc.recovery_end, sim: (inc as any).recovery_end_sim_s, color: '#00ff88' },
+                  ];
+                  return (
+                    <>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {phases.map((ph) => {
+                          const done = typeof ph.t === 'number' && ph.t > 0;
+                          return (
+                            <div key={ph.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{
+                                width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                                background: done ? ph.color : 'rgba(255,255,255,0.12)',
+                                boxShadow: done ? `0 0 6px ${ph.color}` : 'none',
+                              }} />
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: done ? '#fff' : 'rgba(255,255,255,0.3)', width: 110, flexShrink: 0 }}>
+                                {ph.label}
+                              </span>
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: done ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)' }}>
+                                {done ? new Date(ph.t!).toLocaleTimeString() : '— pending —'}
+                              </span>
+                              {done && typeof ph.sim === 'number' && (
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 7.5, color: 'rgba(0,212,255,0.6)', marginLeft: 'auto' }}>
+                                  T+{ph.sim.toFixed(1)}s SIM
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {(inc.total_resolution_ms != null || (inc as any).total_resolution_sim_s != null) && (
+                        <div style={{ marginTop: 10, padding: '8px 10px', background: 'rgba(0,255,136,0.06)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: 6, display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#00ff88' }}>
+                            TOTAL RESOLUTION (BACKEND-AUTHORITATIVE)
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, color: '#00ff88' }}>
+                            {inc.total_resolution_ms != null && `${(inc.total_resolution_ms / 1000).toFixed(2)}s`}
+                            {(inc as any).total_resolution_sim_s != null && ` · ${(inc as any).total_resolution_sim_s.toFixed(1)}s sim`}
+                          </span>
+                        </div>
+                      )}
+                      {(inc as any).recovery_mode && (inc as any).recovery_mode !== 'none' && (
+                        <div style={{ marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)' }}>
+                          RECOVERY MODE: <strong style={{ color: (inc as any).recovery_mode === 'ai' ? '#9b5de5' : '#00d4ff' }}>
+                            {String((inc as any).recovery_mode).toUpperCase()}
+                          </strong>
+                          {' '}· NORMALIZED FAULT: <strong style={{ color: '#fff' }}>{inc.normalized_fault_category}</strong>
+                          {typeof inc.confidence === 'number' && ` · CONFIDENCE: ${(inc.confidence * 100).toFixed(0)}%`}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 
@@ -424,6 +526,70 @@ export function AIScreen() {
             </div>
           </div>
         </div>
+        {/* ── v3.0: Manual procedure confirmation modal ── */}
+        <AnimatePresence>
+          {pendingProc && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPendingProc(null)}
+              style={{
+                position: 'fixed', inset: 0, zIndex: 1000,
+                background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+              }}
+            >
+              <motion.div
+                initial={{ scale: 0.92, y: 16 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.92, y: 16 }}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  maxWidth: 480, width: '100%', padding: 24,
+                  background: '#050c19', border: '1px solid #ff8c00', borderRadius: 12,
+                }}
+              >
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#ff8c00', letterSpacing: '0.15em', marginBottom: 10 }}>
+                  CONFIRM MANUAL RECOVERY PROCEDURE
+                </div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: '#fff', marginBottom: 8 }}>
+                  {pendingProc.proc.name}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.55)', lineHeight: 1.5, marginBottom: 14 }}>
+                  {pendingProc.proc.description}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.45)', marginBottom: 6 }}>
+                  COMMANDS: <span style={{ color: '#00d4ff' }}>{pendingProc.proc.commands?.join(', ')}</span>
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.45)', marginBottom: 18 }}>
+                  RISK LEVEL: <span style={{ color: '#ff8c00' }}>{String(pendingProc.proc.risk_level).toUpperCase()}</span>
+                  {' '}· ESTIMATED DURATION: <span style={{ color: '#fff' }}>{Math.round(pendingProc.proc.estimated_duration_s)}s</span>
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    onClick={() => handleExecuteProcedure(pendingProc.incidentId, pendingProc.proc)}
+                    style={{
+                      flex: 1, padding: '10px', background: 'rgba(255,140,0,0.2)', border: '1px solid #ff8c00',
+                      borderRadius: 6, color: '#ff8c00', fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >
+                    ✓ CONFIRM & EXECUTE
+                  </button>
+                  <button
+                    onClick={() => setPendingProc(null)}
+                    style={{
+                      flex: 1, padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.2)',
+                      borderRadius: 6, color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer',
+                    }}
+                  >
+                    CANCEL
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

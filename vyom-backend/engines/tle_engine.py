@@ -101,21 +101,48 @@ class TLEEngine:
             mean_motion_rev_day=mean_motion,
         )
 
-    async def fetch_tle(self, norad_id: str) -> Optional[TLEData]:
+    async def fetch_tle_async(self, norad_id: str) -> Optional[TLEData]:
+        """Async variant — fetch latest TLE from CelesTrak without blocking the loop."""
+        if norad_id in self._tle_cache:
+            cached = self._tle_cache[norad_id]
+            if time.time() - cached.fetched_at < self._cache_ttl_s:
+                return cached
+        try:
+            import httpx
+            url = f"{self.CELESTRAK_URL}?CATNR={norad_id}&FORMAT=TLE"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    logger.warning("TLE fetch failed for NORAD %s: HTTP %s", norad_id, resp.status_code)
+                    return self._tle_cache.get(norad_id)
+                text = resp.text
+            lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+            if len(lines) < 3:
+                logger.warning("Invalid TLE response for NORAD %s", norad_id)
+                return self._tle_cache.get(norad_id)
+            tle = self._parse_tle(lines[0], lines[1], lines[2])
+            self._tle_cache[norad_id] = tle
+            logger.info("TLE updated for %s (NORAD %s)", tle.name, norad_id)
+            return tle
+        except Exception as e:
+            logger.warning("TLE fetch error for NORAD %s: %s", norad_id, e)
+            return self._tle_cache.get(norad_id)
+
+    def fetch_tle(self, norad_id: str) -> Optional[TLEData]:
         """Fetch latest TLE from CelesTrak. Returns cached data if within TTL."""
         if norad_id in self._tle_cache:
             cached = self._tle_cache[norad_id]
             if time.time() - cached.fetched_at < self._cache_ttl_s:
                 return cached
         try:
-            import aiohttp
+            import httpx
             url = f"{self.CELESTRAK_URL}?CATNR={norad_id}&FORMAT=TLE"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status != 200:
-                        logger.warning("TLE fetch failed for NORAD %s: HTTP %s", norad_id, resp.status)
-                        return self._tle_cache.get(norad_id)
-                    text = await resp.text()
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(url)
+                if resp.status_code != 200:
+                    logger.warning("TLE fetch failed for NORAD %s: HTTP %s", norad_id, resp.status_code)
+                    return self._tle_cache.get(norad_id)
+                text = resp.text
             lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
             if len(lines) < 3:
                 logger.warning("Invalid TLE response for NORAD %s", norad_id)
@@ -125,7 +152,7 @@ class TLEEngine:
             logger.info("TLE updated for %s (NORAD %s)", tle.name, norad_id)
             return tle
         except ImportError:
-            logger.warning("aiohttp not installed — TLE fetch unavailable.")
+            logger.warning("httpx not installed — TLE fetch unavailable.")
             return self._tle_cache.get(norad_id)
         except Exception as e:
             logger.warning("TLE fetch error for NORAD %s: %s", norad_id, e)

@@ -32,6 +32,10 @@ class RecoveryEngine:
 
     def begin_monitoring(self, fault_type: str, command_executed_at: float) -> None:
         """Start monitoring recovery after a command is executed."""
+        # De-duplicate: skip if an unresolved monitor already exists for this type
+        for m in self._monitors:
+            if m.fault_type == fault_type and not m.recovered and not m.failed_to_recover:
+                return
         m = RecoveryMonitor(
             fault_type=fault_type,
             started_at=time.time(),
@@ -46,7 +50,17 @@ class RecoveryEngine:
         Only marks recovered if consecutive clear ticks achieved.
         """
         recovered_faults = []
-        active_channels = {a.channel.split("_")[0] for a in anomalies if a.severity == "critical"}
+        # Only physical, real-time detection strategies block recovery
+        # confirmation. Statistical/multivariate detectors compare against a
+        # rolling baseline that is skewed for tens of ticks after a fault and
+        # would otherwise keep resetting confirmation forever.
+        physical = {"threshold", "rate_of_change", "persistence"}
+        active_channels = {
+            a.channel.split("_")[0]
+            for a in anomalies
+            if a.severity == "critical" and a.detection_strategy in physical
+        }
+        self.last_active_channels = sorted(active_channels)  # diagnostics
 
         for monitor in self._monitors:
             if monitor.recovered or monitor.failed_to_recover:

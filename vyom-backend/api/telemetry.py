@@ -2,6 +2,7 @@
 VYOM Backend — Telemetry & Blackbox API Routers
 """
 import time
+import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
@@ -63,7 +64,7 @@ def get_blackbox(
     limit: int = Query(200, ge=1, le=2000),
     db: Session = Depends(get_db),
 ):
-    """Get black box events for a mission."""
+    """Get black box events for a mission (with v3.0 audit fields)."""
     q = db.query(BBEvent).filter(BBEvent.mission_id == mission_id)
     if event_type:
         q = q.filter(BBEvent.event_type == event_type)
@@ -80,9 +81,71 @@ def get_blackbox(
             "description": e.description,
             "source": e.source,
             "immutable": True,
+            # ── v3.0 audit fields ──
+            "subsystem": e.subsystem,
+            "crewId": e.crew_id,
+            "rawError": e.raw_error,
+            "normalizedFault": e.normalized_fault,
+            "operator": e.operator,
+            "commandProcedure": e.command_procedure,
+            "result": e.result,
+            "recoveryStatus": e.recovery_status,
+            "incidentId": e.incident_id,
+            "correctionOf": e.correction_of,
+            "modelVersion": e.model_version,
+            "eventHash": e.event_hash,
+            "prevHash": e.prev_hash,
         }
         for e in reversed(events)
     ]
+
+
+@blackbox_router.get("/verify")
+def verify_blackbox_chain(mission_id: str, db: Session = Depends(get_db)):
+    """Verify the tamper-evident hash chain of the mission Black Box."""
+    from core.blackbox import verify_chain
+    return verify_chain(db, mission_id)
+
+
+@blackbox_router.post("/corrections", status_code=201)
+def create_correction_event(
+    mission_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """Create a correction event referencing an original Black Box record.
+
+    The original record is never modified or deleted (append-only history).
+    Body: {original_event_id, description, corrected_by?, reason?}
+    """
+    from core.blackbox import append_event
+    original_id = payload.get("original_event_id")
+    if not original_id:
+        raise HTTPException(400, "original_event_id is required")
+    original = db.query(BBEvent).filter(BBEvent.id == original_id, BBEvent.mission_id == mission_id).first()
+    if not original:
+        raise HTTPException(404, "Original event not found")
+
+    ev = append_event(
+        db,
+        id=f"bb-correction-{int(time.time()*1000)}-{uuid.uuid4().hex[:4]}",
+        mission_id=mission_id,
+        mission_day=original.mission_day,
+        timestamp=int(time.time() * 1000),
+        event_type="correction",
+        severity="nominal",
+        description=payload.get("description") or f"Correction of event {original_id}",
+        source=payload.get("corrected_by") or "Ground Control",
+        correction_of=original_id,
+        operator=payload.get("corrected_by"),
+    )
+    db.commit()
+    return {
+        "status": "created",
+        "correction_event_id": ev.id,
+        "corrects_event": original_id,
+        "note": "Original record preserved unmodified (append-only)",
+    }
 
 
 @blackbox_router.get("/export")
@@ -107,6 +170,22 @@ def export_blackbox(mission_id: str, db: Session = Depends(get_db)):
                 "severity": e.severity,
                 "description": e.description,
                 "source": e.source,
+                # ── v3.0 audit fields ──
+                "subsystem": e.subsystem,
+                "crewId": e.crew_id,
+                "rawError": e.raw_error,
+                "normalizedFault": e.normalized_fault,
+                "aiAnalysis": e.ai_analysis_json,
+                "manualIntervention": e.manual_intervention_json,
+                "operator": e.operator,
+                "commandProcedure": e.command_procedure,
+                "result": e.result,
+                "recoveryStatus": e.recovery_status,
+                "incidentId": e.incident_id,
+                "correctionOf": e.correction_of,
+                "modelVersion": e.model_version,
+                "eventHash": e.event_hash,
+                "prevHash": e.prev_hash,
             }
             for e in events
         ],

@@ -14,13 +14,15 @@ def create_baseline(mission_id: str, db: Session = Depends(get_db)):
     """Create a baseline from current simulation state or latest snapshot."""
     sim = get_simulation(mission_id)
     if sim:
-        baseline_id = sim.scenario_engine.create_baseline()
+        baseline_id = sim.scenario_engine.create_baseline(
+            sim.config, dict(vars(sim.state)), sim.mission_day
+        )
         return {"baseline_id": baseline_id}
     else:
         snapshot = db.query(MissionSnapshot).filter(MissionSnapshot.mission_id == mission_id).order_by(MissionSnapshot.sim_timestamp.desc()).first()
         if not snapshot:
             raise HTTPException(404, "No simulation or snapshot available for baseline")
-        
+
         return {"baseline_id": str(snapshot.id)}
 
 
@@ -30,23 +32,24 @@ def run_comparison(mission_id: str, scenarios: List[ScenarioCreateSchema]):
     sim = get_simulation(mission_id)
     if not sim:
         raise HTTPException(404, "Simulation not running")
-        
+
+    baseline_id = sim.scenario_engine.create_baseline(
+        sim.config, dict(vars(sim.state)), sim.mission_day
+    )
+    scenario_ids: List[str] = []
     for sc in scenarios:
         sid = sim.scenario_engine.create_scenario(
-            name=sc.name,
-            fault_injections=sc.fault_injections,
-            duration_days=sc.duration_days
+            baseline_id,
+            sc.name,
+            sc.fault_injections
         )
-        sim.scenario_engine.simulate_scenario(sid)
-        
-    comparison_data = sim.scenario_engine.compare_scenarios()
-    
-    # Return as per ScenarioComparisonSchema
-    if isinstance(comparison_data, dict) and "baseline_id" in comparison_data:
-        return comparison_data
-        
+        scenario_ids.append(sid)
+        sim.scenario_engine.simulate_scenario(sid, sc.duration_days)
+
+    comparison_data = sim.scenario_engine.compare_scenarios(baseline_id, scenario_ids)
+
     return ScenarioComparisonSchema(
-        baseline_id=sim.scenario_engine.baseline_id,
-        scenarios=[sim.scenario_engine.scenarios[s] for s in sim.scenario_engine.scenarios],
+        baseline_id=baseline_id,
+        scenarios=[sim.scenario_engine.scenarios[s] for s in scenario_ids],
         comparison=comparison_data
     )

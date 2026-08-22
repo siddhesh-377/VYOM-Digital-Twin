@@ -40,6 +40,8 @@ class MissionCreateSchema(BaseModel):
     launchSite: LaunchSiteSchema = Field(default_factory=LaunchSiteSchema)
     crew: List[CrewMemberSchema] = Field(default_factory=list)
     satellite: Optional[Dict[str, Any]] = None
+    architectureId: Optional[str] = None
+    endGoal: Optional[str] = None  # intended end-of-mission goal, declared at creation
     createdAt: int = Field(default_factory=lambda: int(time.time() * 1000))
 
 
@@ -311,6 +313,13 @@ class ResolutionTimelineSchema(BaseModel):
     recovery_end_time_ms: Optional[int] = None
     recovery_duration_ms: Optional[int] = None
     total_resolution_ms: Optional[int] = None
+    # Simulation-clock timeline (authoritative under time acceleration)
+    detection_sim_s: Optional[float] = None
+    diagnosis_sim_s: Optional[float] = None
+    decision_sim_s: Optional[float] = None
+    recovery_start_sim_s: Optional[float] = None
+    recovery_end_sim_s: Optional[float] = None
+    total_resolution_sim_s: Optional[float] = None
 
 
 # ── Manual Recovery ──────────────────────────────────────────────────────────
@@ -322,6 +331,7 @@ class ManualActionSchema(BaseModel):
     command: str = ""
     result: str = ""
     timestamp: int = 0
+    confirmed: bool = False  # operator confirmation required for execution
 
 
 class RecoveryProcedureSchema(BaseModel):
@@ -335,6 +345,7 @@ class RecoveryProcedureSchema(BaseModel):
     estimated_duration_s: float
     risk_level: str
     requires_confirmation: bool = True
+    execution_mode: Optional[str] = None  # execute | execute-after-confirmation | view-only
 
 
 # ── Crew Health ──────────────────────────────────────────────────────────────

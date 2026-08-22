@@ -6,153 +6,23 @@ import io
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from core.loop import get_simulation
+from simulation.loop import get_simulation
 
-from core.database import get_db, Mission, BlackBoxEvent, TelemetryRecord, DailySummary, Incident, MissionRiskHistory, CrewHealthRecord, FarewellAssessment
+from core.database import get_db, Mission
+from core.report_builder import build_mission_report
 
 router = APIRouter(prefix="/api/missions/{mission_id}/report", tags=["reports"])
 
 
 @router.get("")
 def get_mission_report(mission_id: str, db: Session = Depends(get_db)):
-    """Get complete mission report as JSON."""
+    """Get complete mission report as JSON, built from the authoritative event database."""
     m = db.query(Mission).filter(Mission.id == mission_id).first()
     if not m:
         raise HTTPException(404, "Mission not found")
 
     sim = get_simulation(mission_id)
-
-    # Black box events
-    events = db.query(BlackBoxEvent).filter(BlackBoxEvent.mission_id == mission_id) \
-        .order_by(BlackBoxEvent.timestamp.asc()).limit(5000).all()
-    incidents = [e for e in events if e.severity in ["warning", "critical"]]
-    ai_events = [e for e in events if e.event_type == "ai"]
-    recovery_events = [e for e in events if e.event_type == "recovery"]
-
-    # Telemetry stats
-    telem_records = db.query(TelemetryRecord).filter(TelemetryRecord.mission_id == mission_id) \
-        .order_by(TelemetryRecord.sim_timestamp.asc()).limit(10000).all()
-    health_values = [r.data.get("overallHealth", 100) for r in telem_records if r.data]
-
-    min_health = min(health_values) if health_values else 100.0
-    max_health = max(health_values) if health_values else 100.0
-    avg_health = sum(health_values) / len(health_values) if health_values else 100.0
-
-    orbit_summary = {}
-    if telem_records:
-        last_telem = telem_records[-1].data if telem_records else {}
-        orbit_summary = last_telem.get("orbit", {})
-
-    # Live state if available
-    overall_health = sim.state.overall_health if sim else m.overall_health
-    mission_day = sim.mission_day if sim else m.mission_day
-    objective_progress = sim.objective_progress if sim else m.objective_progress
-    status = sim.status if sim else m.status
-
-    # Commands
-    commands_list = sim.cmd_engine.to_dict_list() if sim else []
-    
-    # ── v3.0 Data ──
-    # Daily Summaries
-    daily_summaries_db = db.query(DailySummary).filter(DailySummary.mission_id == mission_id).order_by(DailySummary.mission_day.asc()).all()
-    daily_summaries = [s.summary_json for s in daily_summaries_db]
-    
-    # Incidents (v3.0 table)
-    v3_incidents = db.query(Incident).filter(Incident.mission_id == mission_id).all()
-    failure_analysis = []
-    for inc in v3_incidents:
-        failure_analysis.append({
-            "incident_id": inc.id,
-            "mission_day": inc.mission_day,
-            "category": inc.normalized_fault_category,
-            "subsystem": inc.normalized_subsystem,
-            "resolution_time_ms": inc.total_resolution_ms,
-            "recovery_mode": inc.recovery_mode,
-            "status": inc.status
-        })
-        
-    # Crew Health History
-    crew_records = db.query(CrewHealthRecord).filter(CrewHealthRecord.mission_id == mission_id).order_by(CrewHealthRecord.timestamp.asc()).limit(1000).all()
-    
-    # Risk History
-    risk_records = db.query(MissionRiskHistory).filter(MissionRiskHistory.mission_id == mission_id).order_by(MissionRiskHistory.timestamp.asc()).limit(1000).all()
-    
-    # Farewell Assessment
-    farewell = db.query(FarewellAssessment).filter(FarewellAssessment.mission_id == mission_id).order_by(FarewellAssessment.timestamp.desc()).first()
-
-    return {
-        "mission_id": mission_id,
-        "mission_name": m.name,
-        "mission_type": m.mission_type,
-        "destination": m.destination,
-        "objective": m.objective,
-        "budget_crore": m.budget_crore,
-        "launch_site": m.launch_site or {},
-        "status": status,
-        "mission_day": round(mission_day, 4),
-        "objective_progress": round(objective_progress, 2),
-        "overall_health": round(overall_health, 2),
-        "stats": {
-            "total_events": len(events),
-            "total_incidents": len(incidents),
-            "ai_diagnoses": len(ai_events),
-            "commands_executed": len([c for c in commands_list if c["status"] == "COMPLETE"]),
-            "recovery_events": len(recovery_events),
-            "min_health": round(min_health, 2),
-            "max_health": round(max_health, 2),
-            "avg_health": round(avg_health, 2),
-            "telemetry_records": len(telem_records),
-            "orbit_trail_points": len(sim.orbit_trail) if sim else 0,
-        },
-        "orbit_summary": orbit_summary,
-        "telemetry_stats": {
-            "min_health": round(min_health, 2),
-            "max_health": round(max_health, 2),
-            "avg_health": round(avg_health, 2),
-            "records": len(telem_records),
-        },
-        "incidents": [
-            {
-                "id": e.id,
-                "missionDay": round(e.mission_day, 4),
-                "type": e.event_type,
-                "severity": e.severity,
-                "description": e.description,
-                "source": e.source,
-            }
-            for e in incidents[-20:]  # last 20 incidents
-        ],
-        "ai_diagnoses": [
-            {
-                "id": e.id,
-                "missionDay": round(e.mission_day, 4),
-                "description": e.description,
-            }
-            for e in ai_events[-10:]
-        ],
-        "commands_executed": commands_list[:20],
-        "recovery_events": [
-            {
-                "id": e.id,
-                "missionDay": round(e.mission_day, 4),
-                "description": e.description,
-            }
-            for e in recovery_events
-        ],
-        "crew_summary": m.crew_json or [],
-        "generated_at": int(time.time() * 1000),
-        # v3.0 Returns
-        "mission_phase": m.mission_phase,
-        "rul_days": m.rul_days,
-        "daily_summaries": daily_summaries,
-        "failure_analysis": failure_analysis,
-        "risk_history": [{"day": r.mission_day, "score": r.risk_score} for r in risk_records],
-        "crew_health_summary": [{"day": c.mission_day, "crew_id": c.crew_id, "fatigue": c.fatigue_index} for c in crew_records],
-        "farewell_assessment": {
-            "recommended": farewell.recommended_option if farewell else None,
-            "rul": farewell.rul_days if farewell else None
-        } if farewell else None
-    }
+    return build_mission_report(db, m, sim)
 
 
 @router.get("/pdf")
@@ -265,11 +135,13 @@ def get_mission_report_pdf(mission_id: str, db: Session = Depends(get_db)):
             check_page()
             c.setFillColor(HexColor("#ff2d55" if inc["status"] != "resolved" else "#ff8c00"))
             c.setFont("Helvetica-Bold", 8)
-            res_str = f"{inc['resolution_time_ms']/1000:.1f}s" if inc['resolution_time_ms'] else "pending"
+            res_ms = inc.get("total_resolution_ms")
+            res_str = f"{res_ms/1000:.1f}s" if res_ms else "pending"
             c.drawString(margin + 4, y, f"[{inc['status'].upper()}] Day {inc['mission_day']:.2f}")
             c.setFillColor(HexColor("#ccddee"))
             c.setFont("Helvetica", 8)
-            c.drawString(margin + 120, y, f"{inc['subsystem']}: {inc['category']} (Mode: {inc['recovery_mode']}) [Res: {res_str}]")
+            c.drawString(margin + 120, y, f"{inc['normalized_subsystem']}: {inc['normalized_category']} "
+                                          f"(Mode: {inc['recovery_mode']}) [Res: {res_str}]")
             y -= 10
     elif report["incidents"]:
         for inc in report["incidents"][:10]:
@@ -285,20 +157,23 @@ def get_mission_report_pdf(mission_id: str, db: Session = Depends(get_db)):
         row("Result", "No incidents recorded — nominal mission")
     y -= 8
 
-    # 04 Daily Analysis
-    if report.get("daily_summaries"):
+    # 04 Daily Analysis (Day 0 → final day)
+    if report.get("daily_analysis"):
         check_page()
-        section("04 · DAILY ANALYSIS", "#00d4ff")
-        for summary in report["daily_summaries"][-10:]:  # show last 10 days
+        section("04 · DAILY ANALYSIS (DAY 0 TO FINAL DAY)", "#00d4ff")
+        for entry in report["daily_analysis"][-15:]:
             check_page()
-            day = summary.get("mission_state", {}).get("mission_day", 0)
-            health = summary.get("mission_state", {}).get("health_avg", 100)
+            day = entry.get("mission_day", 0)
+            health = (entry.get("mission_state") or {}).get("health_avg", 100)
+            env_cls = (entry.get("environment") or {}).get("classification", "nominal")
+            n_ev = entry.get("event_count", 0)
             c.setFillColor(HexColor("#00d4ff"))
             c.setFont("Helvetica-Bold", 8)
             c.drawString(margin + 4, y, f"Day {day}")
             c.setFillColor(HexColor("#ccddee"))
             c.setFont("Helvetica", 8)
-            c.drawString(margin + 100, y, f"Avg Health: {health:.1f}% | Env: {summary.get('environment', {}).get('classification', 'nominal')}")
+            c.drawString(margin + 100, y,
+                         f"Avg Health: {health:.1f}% | Env: {env_cls} | Events: {n_ev}")
             y -= 10
         y -= 8
 
@@ -319,15 +194,50 @@ def get_mission_report_pdf(mission_id: str, db: Session = Depends(get_db)):
                          f"Status: {crew.get('status','')} | Data: SIMULATED/ESTIMATED")
             y -= 10
 
-    # 06 Farewell
-    if report.get("farewell_assessment"):
+    # 06 Recovery-Time Analysis (AI vs Manual)
+    rta = report.get("recovery_time_analysis") or {}
+    if rta.get("averages"):
         check_page()
-        section("06 · FAREWELL ASSESSMENT", "#ff2d55")
-        fw = report["farewell_assessment"]
-        if fw.get("recommended"):
-            row("Recommended Action", fw["recommended"])
-        if fw.get("rul"):
-            row("Estimated RUL", f"{round(fw['rul'], 1)} days")
+        section("06 · RECOVERY-TIME ANALYSIS (AI VS MANUAL)", "#9b5de5")
+        avgs = rta["averages"]
+        if avgs.get("ai_total_resolution_ms") is not None:
+            row("Avg AI Resolution", f"{avgs['ai_total_resolution_ms']/1000:.1f}s ({avgs.get('resolved_count', 0)} resolved)")
+        else:
+            row("Avg AI Resolution", "No AI-resolved incidents")
+        if avgs.get("manual_total_resolution_ms") is not None:
+            row("Avg Manual Resolution", f"{avgs['manual_total_resolution_ms']/1000:.1f}s")
+        else:
+            row("Avg Manual Resolution", "No manually-resolved incidents")
+        y -= 8
+
+    # 07 Mission Risk
+    mra = report.get("mission_risk_analysis") or {}
+    if mra.get("history"):
+        check_page()
+        section("07 · MISSION RISK HISTORY", "#ff8c00")
+        hist = mra["history"]
+        for pt in hist[-8:]:
+            check_page()
+            c.setFillColor(HexColor("#ccddee"))
+            c.setFont("Helvetica", 8)
+            c.drawString(margin + 4, y,
+                         f"Day {pt['mission_day']:.2f}: {pt['risk_score']:.1f} ({pt.get('risk_category', '—')}) trend: {pt.get('trend', '—')}")
+            y -= 10
+        y -= 8
+
+    # 08 End-of-Mission / Farewell
+    eom = report.get("end_of_mission_analysis")
+    if eom:
+        check_page()
+        section("08 · END-OF-MISSION ASSESSMENT", "#ff2d55")
+        if eom.get("recommended_option"):
+            row("Recommended Action", eom["recommended_option"])
+        if eom.get("spacecraft_health") is not None:
+            row("Spacecraft Health", f"{eom['spacecraft_health']:.1f}%")
+        mc = eom.get("monte_carlo_results") or {}
+        if mc.get("success_rate") is not None:
+            row("MC Success Rate", f"{mc['success_rate']*100:.1f}% ({mc.get('runs_completed')} runs)")
+        row("Note", "Simulation estimate — not real-world guarantee")
 
     c.save()
     buffer.seek(0)

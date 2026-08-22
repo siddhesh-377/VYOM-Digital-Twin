@@ -20,13 +20,14 @@ def get_timeline(mission_id: str, db: Session = Depends(get_db)):
     
     for ev in bb_events:
         timeline.append({
+            "id": ev.id,
             "mission_day": ev.mission_day,
             "timestamp": ev.timestamp,
             "event_type": "blackbox",
             "severity": ev.severity,
             "description": ev.description,
             "source": ev.source,
-            "details": {"event_type": ev.event_type}
+            "details": {"event_type": ev.event_type, "incident_id": ev.incident_id},
         })
     
     for act in activities:

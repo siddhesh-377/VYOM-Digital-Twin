@@ -36,6 +36,18 @@ ROC_LIMITS = {
     "voltage_v":          {"warning": 0.1,  "critical": 0.3},
 }
 
+# Minimum absolute change (in channel units) required before rate-of-change is
+# evaluated. Telemetry channels carry sensor noise that regenerates every tick;
+# without this floor, tiny dt values produce enormous false rates.
+ROC_NOISE_FLOOR = {
+    "battery_percent":       1.0,
+    "cpu_temp_c":            3.0,
+    "signal_dbm":            5.0,
+    "radiation_level_usv_h": 8.0,
+    "voltage_v":             0.4,
+}
+ROC_NOISE_FLOOR_DEFAULT = 0.01
+
 # Persistence: ticks a value must stay out-of-band before triggering
 PERSISTENCE_TICKS = {"warning": 15, "critical": 8}
 
@@ -169,7 +181,10 @@ class AnomalyDetector:
             prev = self._prev_values.get(channel)
             if val is None or prev is None:
                 continue
-            roc = abs((val - prev) / max(dt_s, 0.001))
+            delta = abs(val - prev)
+            if delta < ROC_NOISE_FLOOR.get(channel, ROC_NOISE_FLOOR_DEFAULT):
+                continue  # within sensor noise band — not a real rate change
+            roc = delta / max(dt_s, 0.001)
             if roc >= limits["critical"]:
                 sev, thresh = "critical", limits["critical"]
             elif roc >= limits["warning"]:

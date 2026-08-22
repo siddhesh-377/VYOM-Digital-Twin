@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from core.database import init_db
+from core.architecture_seed import seed_architectures
 from api.missions import router as missions_router
 from api.faults import router as faults_router
 from api.telemetry import telemetry_router, blackbox_router, commands_router
@@ -28,6 +29,7 @@ from api.farewell_api import router as farewell_router
 from api.architectures import router as architectures_router
 from api.scenarios_api import router as scenarios_router
 from api.timeline_api import router as timeline_router
+from api.orbital_api import router as orbital_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +41,8 @@ logger = logging.getLogger("vyom")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    logger.info("✓ VYOM Backend started — Database initialized")
+    seeded = seed_architectures()
+    logger.info("✓ VYOM Backend started — Database initialized (%d architectures seeded)", seeded)
     logger.info("✓ WebSocket endpoint: ws://localhost:8000/ws/{mission_id}")
     logger.info("✓ API docs: http://localhost:8000/docs")
     yield
@@ -85,6 +88,7 @@ app.include_router(farewell_router)
 app.include_router(architectures_router)
 app.include_router(scenarios_router)
 app.include_router(timeline_router)
+app.include_router(orbital_router)
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────

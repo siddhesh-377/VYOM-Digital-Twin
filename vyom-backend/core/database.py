@@ -81,6 +81,9 @@ class BlackBoxEvent(Base):
     incident_id         = Column(String, nullable=True)
     correction_of       = Column(String, nullable=True)  # references original event ID
     model_version       = Column(String, default="3.0.0")
+    # ── Tamper-evident hash chain (append-only) ──
+    prev_hash           = Column(String, nullable=True)
+    event_hash          = Column(String, nullable=True)
 
 
 class CommandRecord(Base):
@@ -146,6 +149,13 @@ class Incident(Base):
     recovery_start_time_ms = Column(BigInteger, nullable=True)
     recovery_end_time_ms = Column(BigInteger, nullable=True)
     total_resolution_ms = Column(BigInteger, nullable=True)
+    # Simulation-clock timestamps (meaningful under time acceleration)
+    detection_sim_s    = Column(Float, nullable=True)
+    diagnosis_sim_s    = Column(Float, nullable=True)
+    decision_sim_s     = Column(Float, nullable=True)
+    recovery_start_sim_s = Column(Float, nullable=True)
+    recovery_end_sim_s = Column(Float, nullable=True)
+    total_resolution_sim_s = Column(Float, nullable=True)
     recovery_mode       = Column(String, nullable=True)  # ai | manual
     ai_analysis_json    = Column(JSON, nullable=True)
     manual_actions_json = Column(JSON, nullable=True)
@@ -296,6 +306,9 @@ class FarewellAssessment(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Backward-compatible migration for pre-existing databases
+    from core.migrations import run_migrations
+    run_migrations()
 
 
 def get_db():

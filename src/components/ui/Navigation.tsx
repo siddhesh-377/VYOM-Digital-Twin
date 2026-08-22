@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
 import type { AppScreen } from '../../types/mission';
+import { formatElapsed } from '../screens/MissionControlScreen';
 
 const BASE_NAV_ITEMS: { screen: AppScreen; label: string; icon: string; humanOnly?: boolean }[] = [
   { screen: 'mission-control', label: 'MISSION CONTROL', icon: '⬡' },
@@ -15,6 +16,7 @@ const BASE_NAV_ITEMS: { screen: AppScreen; label: string; icon: string; humanOnl
   { screen: 'scenarios', label: 'SCENARIOS', icon: '⚡' },
   { screen: 'ai', label: 'VYOM AI', icon: '◉' },
   { screen: 'mission-time', label: 'MISSION TIME', icon: '◷' },
+  { screen: 'timeline', label: 'TIMELINE', icon: '⌛' },
   { screen: 'blackbox', label: 'BLACK BOX', icon: '▣' },
   { screen: 'replay', label: 'REPLAY', icon: '▶' },
   { screen: 'reports', label: 'REPORTS', icon: '≡' },
@@ -165,8 +167,11 @@ export function Navigation() {
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.35)' }}>
           MISSION DAY
         </div>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, color: '#00d4ff' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, color: '#00d4ff', lineHeight: 1.1 }}>
           {String(Math.floor(missionDay)).padStart(4, '0')}
+        </div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>
+          {formatElapsed(missionDay)}
         </div>
       </div>
     </motion.div>

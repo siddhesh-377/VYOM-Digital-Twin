@@ -39,6 +39,27 @@ TICK_INTERVAL_S = 1.0 / TICK_RATE_HZ
 DB_WRITE_EVERY_S = 2.0     # write telemetry to DB every N sim seconds
 SNAPSHOT_EVERY_S = 60.0    # full state snapshot every N sim seconds
 
+# Sub-stepped integration limits. Physics stays stable because no single step
+# exceeds MAX_PHYSICS_STEP_S; high time-warp factors are honored by running
+# multiple physics steps per wall-clock tick.
+MAX_PHYSICS_STEP_S = 60.0
+MAX_SUBSTEPS_PER_TICK = 30   # 30 x 60s x 10Hz = up to 18,000x effective speed
+
+# Corrective command -> fault types it is designed to clear. Only applied
+# while a recovery attempt is being monitored; verified by RecoveryEngine.
+COMMAND_FIXES = {
+    "SWITCH_ANTENNA":          ["comm_failure", "telemetry_loss"],
+    "RECALIBRATE_COMM":        ["comm_failure", "telemetry_loss"],
+    "ACTIVATE_THERMAL_SHUNT":  ["thermal_overheating"],
+    "MOMENTUM_DUMP":           ["attitude_control_failure"],
+    "GYRO_RECALIBRATION":      ["attitude_control_failure", "sensor_failure"],
+    "ISOLATE_THRUSTER_VALVE":  ["propulsion_anomaly"],
+    "MEMORY_SCRUBBING":        ["radiation_spike"],
+    "RADIATION_SAFE_MODE":     ["radiation_spike"],
+    "EMERGENCY_LOAD_SHEDDING": ["battery_failure"],
+    "SUSPEND_NON_ESSENTIAL":   ["solar_panel_degradation"],
+}
+
 
 class MissionSimulation:
     """Complete simulation instance for one mission."""
@@ -70,6 +91,19 @@ class MissionSimulation:
         self.crew_health_engine = CrewHealthEngine()
         self.risk_engine = RiskEngine()
         self.trajectory_engine = TrajectoryEngine()
+        # Generate the mission-specific planned trajectory so actual flight can
+        # be tracked against plan from Mission Day 0
+        try:
+            self.trajectory_engine.plan_trajectory(
+                {
+                    "altitude_km": alt,
+                    "inclination_deg": inc,
+                    **{k: v for k, v in config.items() if isinstance(v, (int, float, str))},
+                },
+                config.get("destination", "earth-orbit"),
+            )
+        except Exception:
+            logger.warning("Trajectory planning failed; continuing without plan", exc_info=True)
         self.rul_engine = RULEngine()
         self.farewell_engine = FarewellEngine()
         self.daily_summary_engine = DailySummaryEngine()
@@ -112,12 +146,22 @@ class MissionSimulation:
                 real_dt_s = now - prev_wall_time
                 prev_wall_time = now
 
-                # Simulation time step
+                # Total simulated time to advance this tick
                 sim_dt_s = real_dt_s * self.time_multiplier
-                sim_dt_s = min(sim_dt_s, 60.0)  # cap at 60s per tick to avoid instability
+
+                # Sub-stepped integration: physics steps are kept <= 60 s each
+                # for numerical stability, but up to MAX_SUBSTEPS_PER_TICK steps
+                # run per tick so high time-warp settings actually deliver the
+                # promised simulation rate instead of being silently clamped.
+                n_substeps = max(1, min(MAX_SUBSTEPS_PER_TICK,
+                                        math.ceil(sim_dt_s / MAX_PHYSICS_STEP_S)))
+                step_dt = sim_dt_s / n_substeps
 
                 try:
-                    await self._tick(sim_dt_s, loop_count)
+                    for _ in range(n_substeps):
+                        await self._tick(step_dt, loop_count)
+                        if self.paused or self.status in ["completed", "failed"]:
+                            break
                 except Exception:
                     logger.exception("Simulation tick failed for mission %s", self.mission_id)
                 loop_count += 1
@@ -200,10 +244,11 @@ class MissionSimulation:
             ai_analysis = self.ai_guardian.build_ai_analysis(diagnosis, anomalies)
             
             # Find associated incident (if any)
-            active_faults = self.fault_engine.active_faults
+            active_faults = list(self.fault_engine.active_faults.values())
             for fault in active_faults:
                 if getattr(fault, 'incident_id', None):
-                    self.incident_engine.record_diagnosis(fault.incident_id, ai_analysis)
+                    self.incident_engine.record_diagnosis(fault.incident_id, ai_analysis, self.elapsed_sim_s)
+                    self._sync_incident_to_db(fault.incident_id)
                     # Broadcast incident update
                     if self.broadcast_callback:
                         incident = self.incident_engine.get_incident(fault.incident_id)
@@ -218,18 +263,37 @@ class MissionSimulation:
                     )
                 self._command_executed_at = self.elapsed_sim_s
                 self.recovery_eng.begin_monitoring(diagnosis.root_cause, self.elapsed_sim_s)
-                
-                # Update incident for auto-recovery
+                # Also monitor each active injected fault by its canonical type so
+                # recovery confirmation targets the real fault even when the AI
+                # classification falls back to unknown_anomaly
+                for fault in active_faults:
+                    if fault.active and getattr(fault, 'incident_id', None):
+                        self.recovery_eng.begin_monitoring(fault.fault_type, self.elapsed_sim_s)
+
+                # Update incident for auto-recovery (never override a manual takeover)
                 for fault in active_faults:
                     if getattr(fault, 'incident_id', None):
-                        self.incident_engine.record_decision(fault.incident_id, "ai", "Autonomous Execution")
-                        self.incident_engine.start_recovery(fault.incident_id)
+                        live_inc = self.incident_engine.get_incident(fault.incident_id)
+                        if live_inc and live_inc.get("recovery_mode") == "manual":
+                            continue  # operator has taken control of this incident
+                        self.incident_engine.record_decision(fault.incident_id, "ai", "Autonomous Execution", self.elapsed_sim_s)
+                        self.incident_engine.start_recovery(fault.incident_id, self.elapsed_sim_s)
+                        self._sync_incident_to_db(fault.incident_id)
                         
         elif not anomalies:
             ai_analysis = self.ai_guardian.build_ai_analysis(None, [])
 
         # ── 8. Execute commands ───────────────────────────────────────────────
         executed_cmds = self.cmd_engine.execute_pending(self.state)
+
+        # A completed corrective command mitigates its target fault in the
+        # FaultEngine registry (telemetry effects would otherwise be re-applied
+        # every tick). The Recovery Engine still independently verifies that
+        # telemetry actually returns to nominal before confirming resolution.
+        if executed_cmds and self.recovery_eng.get_status():
+            for cmd in executed_cmds:
+                for fixed_type in COMMAND_FIXES.get(cmd.command_type, []):
+                    self.fault_engine.mitigate_by_type(fixed_type)
 
         # ── 9. Recovery check ─────────────────────────────────────────────────
         if self._command_executed_at is not None:
@@ -240,18 +304,36 @@ class MissionSimulation:
                                       f"Recovery confirmed for {fault_type} — all telemetry nominal",
                                       "Recovery Engine")
                 # Clear corresponding fault and update incident
-                for fault in self.fault_engine.active_faults:
+                for fault in self.fault_engine.active_faults.values():
                     if fault.fault_type == fault_type and getattr(fault, 'incident_id', None):
-                        self.incident_engine.complete_recovery(fault.incident_id, success=True)
+                        self.incident_engine.complete_recovery(fault.incident_id, success=True, sim_time_s=self.elapsed_sim_s)
+                        self._sync_incident_to_db(fault.incident_id)
                         if self.broadcast_callback:
                             incident = self.incident_engine.get_incident(fault.incident_id)
                             asyncio.create_task(self.broadcast_callback([{"type": "INCIDENT_UPDATE", "payload": incident}]))
-                
+
                 self.fault_engine.mitigate_by_type(fault_type)
+                self._sync_faults_to_db()
                 self.state.safe_mode = False
 
         # ── 10. Objective & Risk & RUL progress ──────────────────────────────
         self._update_objective()
+        self._update_lifecycle_phase()
+
+        # Persist RUL to the mission row periodically (every ~60s sim time)
+        if tick_count % 600 == 0:
+            try:
+                db = SessionLocal()
+                m = db.query(Mission).filter(Mission.id == self.mission_id).first()
+                if m:
+                    rul_now = self.rul_engine.estimate_rul(
+                        self.state, self.fault_engine.active_faults,
+                        env.__dict__, self.mission_day)
+                    m.rul_days = float(rul_now.get("rul_days", 0.0))
+                    db.commit()
+                db.close()
+            except Exception as e:
+                logger.warning("RUL persist failed: %s", e)
         
         # Calculate Risk and RUL every 10 ticks to save CPU
         if tick_count % 10 == 0:
@@ -278,26 +360,40 @@ class MissionSimulation:
         if self.elapsed_sim_s - self._last_db_write_s >= DB_WRITE_EVERY_S:
             self._last_db_write_s = self.elapsed_sim_s
             await self._persist_telemetry()
-            
-            # Add risk and crew health to DB every telemetry write cycle (roughly)
-            if tick_count % int(DB_WRITE_EVERY_S * TICK_RATE_HZ) == 0:
-                db = SessionLocal()
-                try:
-                    # Save Risk
-                    risk_data = self.risk_engine.calculate_risk(self.state, env.__dict__, self.fault_engine.active_faults, [], self.mission_day, 365.0, False)
-                    db_risk = MissionRiskHistory(mission_id=self.mission_id, mission_day=self.mission_day, timestamp=int(time.time() * 1000), risk_score=risk_data["risk_score"], risk_category=risk_data["risk_category"], contributing_factors=risk_data["contributing_factors"], trend=risk_data["trend"])
-                    db.add(db_risk)
-                    
-                    # Save Crew Health
-                    if self.crew_health_engine.crew_state:
-                        for crew_rec in self.crew_health_engine.to_snapshot_list():
-                            crew_db = CrewHealthRecord(mission_id=self.mission_id, mission_day=self.mission_day, timestamp=int(time.time()*1000), **{k:v for k,v in crew_rec.items() if hasattr(CrewHealthRecord, k)})
-                            db.add(crew_db)
-                    db.commit()
-                except Exception as e:
-                    pass
-                finally:
-                    db.close()
+
+        # Risk + crew health snapshots on their own timer (decoupled from the
+        # telemetry-write phase, which can alias with tick-count gates)
+        if self.elapsed_sim_s - getattr(self, "_last_riskcrew_s", 0.0) >= 5.0:
+            self._last_riskcrew_s = self.elapsed_sim_s
+            db = SessionLocal()
+            try:
+                # Save Risk
+                risk_data = self.risk_engine.calculate_risk(self.state, env.__dict__, self.fault_engine.active_faults, [], self.mission_day, 365.0, False)
+                db_risk = MissionRiskHistory(mission_id=self.mission_id, mission_day=self.mission_day, timestamp=int(time.time() * 1000), risk_score=risk_data["risk_score"], risk_category=risk_data["risk_category"], contributing_factors=risk_data["contributing_factors"], trend=risk_data["trend"])
+                db.add(db_risk)
+
+                # Save Crew Health
+                if self.crew_health_engine.crew_state:
+                    for crew_rec in self.crew_health_engine.to_snapshot_list():
+                        # Map engine keys -> model columns; crew_id is the
+                        # non-identifying role label (never a name)
+                        mapped = {k: v for k, v in crew_rec.items() if hasattr(CrewHealthRecord, k)}
+                        remap = {"fatigue": "fatigue_index", "stress": "stress_index",
+                                 "hydration": "hydration_percent", "workload": "workload_index",
+                                 "respiratory_rate_bpm": "respiratory_rate"}
+                        for src, dst in remap.items():
+                            if src in crew_rec:
+                                mapped[dst] = crew_rec[src]
+                        mapped.pop("name", None)
+                        mapped.pop("is_eva", None)
+                        mapped["crew_id"] = crew_rec.get("role") or crew_rec.get("crew_id") or "Crew"
+                        crew_db = CrewHealthRecord(mission_id=self.mission_id, mission_day=self.mission_day, timestamp=int(time.time()*1000), **mapped)
+                        db.add(crew_db)
+                db.commit()
+            except Exception as e:
+                logger.warning("Crew/risk DB write failed: %s", e)
+            finally:
+                db.close()
 
         if self.elapsed_sim_s - self._last_snapshot_s >= SNAPSHOT_EVERY_S:
             self._last_snapshot_s = self.elapsed_sim_s
@@ -387,17 +483,195 @@ class MissionSimulation:
 
             await self.broadcast_callback(messages)
 
+    def _update_lifecycle_phase(self):
+        """Advance the mission lifecycle phase from configured/derived milestones.
+
+        Phases: pre-launch → launch → LEOP → commissioning → primary-mission →
+        extended-mission → end-of-life. Boundaries are derived from the
+        mission's planned end day / estimated lifetime when available, so the
+        lifecycle reflects the defined mission rather than a hardcoded number.
+        Every transition is appended to phase_transitions_json and the Black Box.
+        """
+        if self.status in ("completed", "failed"):
+            return
+
+        # Derive lifetime anchors once per sim (cached)
+        if not hasattr(self, "_lifecycle_anchors"):
+            planned_end = None
+            lifetime = None
+            db: Session = SessionLocal()
+            try:
+                m = db.query(Mission).filter(Mission.id == self.mission_id).first()
+                if m:
+                    planned_end = getattr(m, "planned_end_day", None)
+                    lifetime = getattr(m, "estimated_lifetime_days", None)
+            except Exception:
+                pass
+            finally:
+                db.close()
+            if not lifetime:
+                # Destination-based nominal lifetimes (data-driven fallback)
+                dest = str(self.config.get("destination", "earth-orbit"))
+                lifetime = {
+                    "leo": 5.0, "earth-orbit": 5.0, "lunar-orbit": 3.0,
+                    "lunar-surface": 2.0, "mars-orbit": 4.0, "mars-surface": 2.0,
+                    "deep-space": 12.0, "lagrange-l1": 10.0,
+                }.get(dest, 5.0) * 365.0
+            if not planned_end:
+                planned_end = float(lifetime)
+            self._lifecycle_anchors = {
+                "launch_end_day": 0.02,
+                "leop_end_day": 0.25,
+                "commissioning_end_day": 1.0,
+                "primary_end_day": min(planned_end, planned_end * 0.8),
+                "extended_end_day": planned_end,
+            }
+
+        a = self._lifecycle_anchors
+        day = self.mission_day
+        if day <= 0.0:
+            new_phase = "pre-launch"
+        elif day < a["launch_end_day"]:
+            new_phase = "launch"
+        elif day < a["leop_end_day"]:
+            new_phase = "leop"
+        elif day < a["commissioning_end_day"]:
+            new_phase = "commissioning"
+        elif day < a["primary_end_day"]:
+            new_phase = "primary-mission"
+        elif day < a["extended_end_day"]:
+            new_phase = "extended-mission"
+        else:
+            new_phase = "end-of-life"
+
+        if new_phase != self.mission_phase:
+            prev = self.mission_phase
+            self.mission_phase = new_phase
+            transition = {
+                "from": prev,
+                "to": new_phase,
+                "mission_day": round(day, 4),
+                "timestamp": int(time.time() * 1000),
+                "anchors": {k: round(v, 2) for k, v in a.items()},
+            }
+            db: Session = SessionLocal()
+            try:
+                m = db.query(Mission).filter(Mission.id == self.mission_id).first()
+                if m:
+                    transitions = m.phase_transitions_json or []
+                    transitions.append(transition)
+                    m.phase_transitions_json = transitions
+                    m.mission_phase = new_phase
+                    db.commit()
+            except Exception as e:
+                logger.warning("Phase transition persist failed: %s", e)
+            finally:
+                db.close()
+
     def _update_objective(self):
-        """Update objective progress based on mission day and health."""
+        """Update objective progress.
+
+        Primary model: weighted completion of genuine mission objectives stored
+        in the mission_objectives table. Fallback (no objectives defined):
+        day/health-based estimate, preserved for backward compatibility.
+        """
         if self.status == "completed":
             return
-        # Simple model: progress driven by mission day and subsystem health
+
+        # Refresh the objective list from the DB at most every 10s sim time
+        if self.elapsed_sim_s - getattr(self, "_last_obj_refresh_s", -1e9) >= 10.0:
+            self._last_obj_refresh_s = self.elapsed_sim_s
+            db: Session = SessionLocal()
+            try:
+                rows = db.query(MissionObjectiveModel).filter(
+                    MissionObjectiveModel.mission_id == self.mission_id
+                ).all()
+                self._objectives_cache = [
+                    {"weight": o.weight or 0.0, "status": o.status} for o in rows
+                ]
+            except Exception as e:
+                logger.warning("Objective refresh failed: %s", e)
+            finally:
+                db.close()
+
+        cached = getattr(self, "_objectives_cache", None)
+        if cached:
+            total_weight = sum(o["weight"] for o in cached) or 1.0
+            done_weight = sum(o["weight"] for o in cached if o["status"] == "completed")
+            self.objective_progress = round(done_weight / total_weight * 100.0, 2)
+            if self.objective_progress >= 99.9 and self.status == "active":
+                self.objective_progress = 100.0
+                self.status = "completed"
+                self._log_event_sync("objective", "nominal",
+                                     "All mission objectives completed — mission complete",
+                                     "Objective Engine")
+            return
+
+        # Legacy fallback: progress driven by mission day and subsystem health
         health_factor = self.state.overall_health / 100.0
         day_progress = min(98.0, self.mission_day * 5.0)  # 5% per day, capped at 98
         self.objective_progress = round(day_progress * health_factor, 2)
         if day_progress >= 98.0 and self.status == "active":
             self.objective_progress = 100.0
             self.status = "completed"
+
+    def _log_event_sync(self, event_type: str, severity: str, description: str, source: str):
+        """Fire-and-forget black box event from synchronous context."""
+        try:
+            asyncio.get_running_loop()
+            asyncio.ensure_future(self._log_event(event_type, severity, description, source))
+        except RuntimeError:
+            pass
+
+    def _sync_faults_to_db(self):
+        """Mirror active/mitigated fault flags into the active_faults table."""
+        db: Session = SessionLocal()
+        try:
+            for fault in self.fault_engine.active_faults.values():
+                row = db.query(FaultRecord).filter(FaultRecord.id == fault.id).first()
+                if row and not fault.active:
+                    row.active = False
+                    row.mitigated_at = int(fault.mitigated_at * 1000) if fault.mitigated_at else int(time.time() * 1000)
+            db.commit()
+        except Exception as e:
+            logger.warning("Fault DB sync failed: %s", e)
+        finally:
+            db.close()
+
+    def _sync_incident_to_db(self, incident_id: str):
+        """Persist incident lifecycle timestamps from the authoritative engine
+        state to the incidents table (append-only field updates on the live row)."""
+        inc = self.incident_engine.get_incident(incident_id)
+        if not inc:
+            return
+        db: Session = SessionLocal()
+        try:
+            row = db.query(IncidentRecord).filter(IncidentRecord.id == incident_id).first()
+            if not row:
+                return  # Incident rows are created at injection time by the API
+            row.diagnosis_time_ms = inc.get("diagnosis_time_ms", row.diagnosis_time_ms)
+            row.decision_time_ms = inc.get("decision_time_ms", row.decision_time_ms)
+            row.recovery_start_time_ms = inc.get("recovery_start_time_ms", row.recovery_start_time_ms)
+            row.recovery_end_time_ms = inc.get("recovery_end_time_ms", row.recovery_end_time_ms)
+            row.total_resolution_ms = inc.get("total_resolution_ms", row.total_resolution_ms)
+            for fld in ("detection_sim_s", "diagnosis_sim_s", "decision_sim_s",
+                        "recovery_start_sim_s", "recovery_end_sim_s", "total_resolution_sim_s"):
+                if inc.get(fld) is not None:
+                    setattr(row, fld, inc[fld])
+            if inc.get("recovery_mode"):
+                row.recovery_mode = inc["recovery_mode"]
+            if inc.get("ai_analysis"):
+                row.ai_analysis_json = inc["ai_analysis"]
+            status_map = {"detected": "open", "diagnosing": "diagnosing",
+                          "recovering": "recovering"}
+            new_status = status_map.get(inc.get("status"), inc.get("status"))
+            if new_status:
+                row.status = new_status
+            db.commit()
+        except Exception as e:
+            logger.warning("Incident DB sync failed for %s: %s", incident_id, e)
+        finally:
+            db.close()
 
     async def _log_event(self, event_type: str, severity: str, description: str, source: str):
         """Persist a Black Box event and broadcast it."""
@@ -412,10 +686,12 @@ class MissionSimulation:
             "source": source,
             "immutable": True,
         }
-        # Persist to DB
+        # Persist to DB (hash-chained append-only)
         db: Session = SessionLocal()
         try:
-            db_event = BBEvent(
+            from core.blackbox import append_event
+            db_event = append_event(
+                db,
                 id=ev_id,
                 mission_id=self.mission_id,
                 mission_day=self.mission_day,
@@ -425,7 +701,6 @@ class MissionSimulation:
                 description=description,
                 source=source,
             )
-            db.add(db_event)
             db.commit()
         except Exception as e:
             logger.warning("DB event write failed: %s", e)

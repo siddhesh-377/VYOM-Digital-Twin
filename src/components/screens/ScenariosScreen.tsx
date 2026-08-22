@@ -7,6 +7,7 @@ import { SatelliteModel } from '../three/SatelliteScene';
 import { StarField } from '../three/SpaceScene';
 import { threatEngine } from '../../engines/ThreatEngine';
 import { backendWS, injectFaultViaBackend } from '../../services/BackendWebSocketService';
+import { WhatIfComparison } from '../three/WhatIfComparison';
 
 const THREATS = [
   {
@@ -282,6 +283,9 @@ export function ScenariosScreen() {
                   </div>
                 </div>
               </div>
+
+              {/* ── v3.0 additive: Mission What-If / Scenario Comparison ── */}
+              <WhatIfComparison />
             </div>
           </div>
         </div>

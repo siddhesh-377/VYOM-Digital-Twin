@@ -51,13 +51,31 @@ class FarewellEngine:
             
         return res
 
+    # Outcome taxonomy — these are DIFFERENT end states and must not be conflated
+    OUTCOME_TAXONOMY = {
+        "crew-safe-return": "crew safely returned",
+        "spacecraft-recovery": "spacecraft safely recovered at Earth's surface",
+        "controlled-deorbit": "spacecraft disposed (controlled re-entry)",
+        "graveyard-orbit": "spacecraft disposed (graveyard orbit)",
+        "passive-decay": "spacecraft disposed (passive decay)",
+        "planetary-disposal": "spacecraft disposed (planetary surface)",
+        "surface-retirement": "spacecraft retired in place on planetary surface",
+        "heliocentric-disposal": "spacecraft disposed (heliocentric orbit)",
+        "extended-mission": "mission extended (spacecraft operational)",
+        "stable-orbit": "mission completed, spacecraft left in stable orbit",
+    }
+
     def recommend_disposition(self, assessment: Dict[str, Any], architecture: Dict[str, Any], is_human_mission: bool = False) -> Dict[str, Any]:
         alt = architecture.get("orbit", {}).get("altitude_km", 400)
-        dest = architecture.get("destination", "earth-orbit")
-        
+        dest = str(architecture.get("destination") or architecture.get("category") or "earth-orbit")
+        disposal_options = [
+            str(o) for o in (architecture.get("disposal_options") or [])
+            if isinstance(o, str)
+        ]
+
         recommended_option = 'extended-mission'
         reasoning = 'Default extended mission.'
-        
+
         if is_human_mission:
             recommended_option = 'crew-safe-return'
             if assessment.get("return_feasibility", 0) > 80:
@@ -70,7 +88,8 @@ class FarewellEngine:
                 reasoning = 'Disposal for deep space/mars missions.'
             elif assessment.get("rul_days", 0) > 30 and assessment.get("spacecraft_health", 0) > 50:
                 recommended_option = 'extended-mission'
-                reasoning = 'Spacecraft remains healthy with remaining life.'
+                reasoning = ('Spacecraft remains healthy with remaining useful life; '
+                             'primary mission completion alone does NOT require disposal.')
             elif alt < 1000 and assessment.get("propellant_remaining", 0) > 10:
                 recommended_option = 'controlled-deorbit'
                 reasoning = 'Sufficient propellant for controlled deorbit.'
@@ -78,10 +97,53 @@ class FarewellEngine:
                 recommended_option = 'graveyard-orbit'
                 reasoning = 'High orbit disposal.'
 
+        # Respect architecture capability: never recommend an option the
+        # spacecraft cannot perform
+        if disposal_options and recommended_option not in disposal_options:
+            fallback = disposal_options[0]
+            reasoning += (f' Recommended option adjusted from "{recommended_option}" to '
+                          f'"{fallback}" because the selected architecture only supports: '
+                          f'{", ".join(disposal_options)}.')
+            recommended_option = fallback
+
+        # Build alternatives-considered list with explicit rejection reasons
+        candidates = [
+            ("extended-mission", "Spacecraft healthy with RUL remaining"),
+            ("controlled-deorbit", "Low orbit with propellant margin allows controlled re-entry"),
+            ("graveyard-orbit", "High-altitude storage orbit beyond operational band"),
+            ("planetary-disposal", "Planetary orbiter can be disposed on the target body"),
+            ("surface-retirement", "Lander/surface craft retires at landing site"),
+            ("heliocentric-disposal", "Deep-space probe remains on heliocentric trajectory"),
+            ("crew-safe-return", "Crewed vehicle returns crew via validated return trajectory"),
+            ("stable-orbit", "Leave spacecraft in its current stable orbit"),
+        ]
+        alternatives = []
+        for option, why_plausible in candidates:
+            if option == recommended_option:
+                continue
+            if disposal_options and option not in disposal_options:
+                alternatives.append({
+                    "option": option,
+                    "rejected_because": f"Not supported by the selected architecture "
+                                        f"(supports: {', '.join(disposal_options)})",
+                })
+            elif option == "extended-mission" and assessment.get("rul_days", 0) <= 30:
+                alternatives.append({"option": option,
+                                     "rejected_because": "Remaining useful life below 30 days"})
+            else:
+                alternatives.append({
+                    "option": option,
+                    "rejected_because": f"Lower mission value than {recommended_option}: {why_plausible.lower()}, "
+                                        f"but condition/constraints favor the recommended option",
+                })
+
         return {
             "recommended_option": recommended_option,
-            "alternatives_considered": [],
-            "reasoning": reasoning
+            "outcome_label": self.OUTCOME_TAXONOMY.get(recommended_option, recommended_option),
+            "alternatives_considered": alternatives[:5],
+            "reasoning": reasoning,
+            "assessment_basis": "spacecraft simulated condition + mission constraints "
+                                "(decision-support estimate, not an irreversible action)",
         }
         
     def run_monte_carlo(self, state: SpacecraftState, scenario_name: str, n_runs: int = 1000) -> Dict[str, Any]:
@@ -95,7 +157,9 @@ class FarewellEngine:
         base_power = state.battery_percent
         base_thermal = 100.0 - abs(state.cpu_temp_c - 20.0)
         
-        random.seed(42)
+        # Genuine uncertainty sampling: each run draws fresh perturbations
+        # (no fixed seed — a seeded MC would return identical fabricated results)
+        random.seed()
         
         for _ in range(n_runs):
             prop = base_prop * (1.0 + random.uniform(-0.10, 0.10))

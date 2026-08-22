@@ -9,7 +9,7 @@
 import { useMissionStore } from '../store/missionStore';
 
 const BACKEND_WS_URL = import.meta.env.VITE_BACKEND_WS_URL ?? 'ws://localhost:8000/ws';
-const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL ?? 'http://localhost:8000';
+export const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL ?? 'http://localhost:8000';
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'failed';
 
@@ -153,15 +153,47 @@ class BackendWebSocketService {
       
       case 'INCIDENT_UPDATE': {
         const inc = payload as any;
-        if (inc && inc.id) {
-          const current = store.incidents;
-          const exists = current.findIndex(i => i.id === inc.id);
+        const incId = inc?.id ?? inc?.incident_id;
+        if (inc && incId) {
+          // Normalize the backend incident payload into the store's Incident shape
+          const nf = inc.normalized_fault ?? {};
+          const normalized: any = {
+            id: incId,
+            mission_day: inc.mission_day ?? 0,
+            normalized_fault_category: nf.category ?? inc.normalized_fault_category ?? 'unknown-anomaly',
+            normalized_subsystem: nf.subsystem ?? inc.normalized_subsystem ?? 'Unknown',
+            severity: typeof inc.severity === 'string' && inc.severity ? inc.severity : (inc.normalized_severity ?? 'warning'),
+            status: inc.status ?? 'open',
+            description: inc.raw_error ?? inc.description ?? '',
+            detection_time: inc.detection_time_ms ?? Date.now(),
+            diagnosis_time: inc.diagnosis_time_ms,
+            decision_time: inc.decision_time_ms,
+            recovery_start: inc.recovery_start_time_ms,
+            recovery_end: inc.recovery_end_time_ms,
+            total_resolution_ms: inc.total_resolution_ms,
+            recovery_mode: inc.recovery_mode ?? 'none',
+            procedures: inc.procedures ?? [],
+            raw_error: inc.raw_error,
+            normalized_root_cause: nf.root_cause ?? inc.normalized_root_cause,
+            confidence: nf.confidence ?? inc.confidence,
+            ai_analysis: inc.ai_analysis,
+            manual_actions: inc.manual_actions_json ?? inc.manual_actions,
+            fault_id: inc.fault_id,
+            detection_sim_s: inc.detection_sim_s,
+            diagnosis_sim_s: inc.diagnosis_sim_s,
+            decision_sim_s: inc.decision_sim_s,
+            recovery_start_sim_s: inc.recovery_start_sim_s,
+            recovery_end_sim_s: inc.recovery_end_sim_s,
+            total_resolution_sim_s: inc.total_resolution_sim_s,
+          };
+          const current = useMissionStore.getState().incidents;
+          const exists = current.findIndex(i => i.id === normalized.id);
           if (exists >= 0) {
             const next = [...current];
-            next[exists] = inc;
+            next[exists] = { ...next[exists], ...normalized };
             useMissionStore.setState({ incidents: next });
           } else {
-            useMissionStore.setState({ incidents: [...current, inc] });
+            useMissionStore.setState({ incidents: [...current, normalized] });
           }
         }
         break;
@@ -347,18 +379,23 @@ export async function injectFaultViaBackend(
   }
 }
 
-/** Submit a manual recovery action for an incident. */
+/** Submit a manual recovery procedure for an incident (severity-gated, audited). */
 export async function submitManualActionViaBackend(
   missionId: string,
   incidentId: string,
-  actionType: string,
-  params: Record<string, any> = {}
-): Promise<{ success: boolean; result?: string; error?: string }> {
+  procedureId: string,
+  options: { operator?: string; confirmed?: boolean } = {}
+): Promise<{ success: boolean; result?: string; commands?: any[]; error?: string }> {
   try {
     const res = await fetch(`${BACKEND_API_URL}/api/missions/${missionId}/incidents/${incidentId}/manual-recovery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action_type: actionType, parameters: params }),
+      body: JSON.stringify({
+        incident_id: incidentId,
+        operator: options.operator ?? 'Ground Control',
+        procedure_id: procedureId,
+        confirmed: options.confirmed ?? true,
+      }),
     });
     if (!res.ok) {
       const err = await res.text();
@@ -366,9 +403,23 @@ export async function submitManualActionViaBackend(
       return { success: false, error: err };
     }
     const data = await res.json();
-    return { success: true, result: data.action_result };
+    return { success: true, result: data.action_result, commands: data.commands };
   } catch (e) {
     return { success: false, error: String(e) };
+  }
+}
+
+/** Fetch validated manual recovery procedures for an incident. */
+export async function fetchIncidentProcedures(
+  missionId: string,
+  incidentId: string
+): Promise<any[]> {
+  try {
+    const res = await fetch(`${BACKEND_API_URL}/api/missions/${missionId}/incidents/${incidentId}/procedures`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
   }
 }
 

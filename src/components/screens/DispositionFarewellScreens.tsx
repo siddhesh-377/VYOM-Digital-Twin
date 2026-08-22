@@ -38,14 +38,27 @@ const DISPOSITIONS: {
 ];
 
 export function DispositionScreen() {
-  const setScreen = useMissionStore((s) => s.setScreen);
-  const setDisposition = useMissionStore((s) => s.setDisposition);
-  const archiveMission = useMissionStore((s) => s.archiveMission);
-  const config = useMissionStore((s) => s.config);
-  const stats = useMissionStore((s) => s.stats);
+  const setScreen          = useMissionStore((s) => s.setScreen);
+  const setDisposition     = useMissionStore((s) => s.setDisposition);
+  const archiveMission     = useMissionStore((s) => s.archiveMission);
+  const config             = useMissionStore((s) => s.config);
+  const stats              = useMissionStore((s) => s.stats);
   const farewellAssessment = useMissionStore((s) => s.farewellAssessment);
+  const telemetry          = useMissionStore((s) => s.telemetry);
+  const missionDay         = useMissionStore((s) => s.missionDay);
+  const rulDays            = useMissionStore((s) => s.rulDays);
+  const resourceReserve    = useMissionStore((s) => s.resourceReservePercent);
+  const aiAnalysis         = useMissionStore((s) => s.aiAnalysis);
+  const milestones         = useMissionStore((s) => s.milestones);
+  const objectiveProgress  = useMissionStore((s) => s.objectiveProgress);
   const [selected, setSelected] = useState<DispositionType | null>(null);
   const [confirming, setConfirming] = useState(false);
+
+  // Compute best recommended option if no farewellAssessment
+  const health = telemetry?.overallHealth ?? 0;
+  const computedRecommendation: DispositionType =
+    farewellAssessment?.recommended_option ??
+    (health > 60 && rulDays > 30 ? 'retirement' : rulDays < 10 ? 'deorbit' : 'return');
 
   const handleConfirm = () => {
     if (!selected) return;
@@ -58,23 +71,45 @@ export function DispositionScreen() {
   return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
+      alignItems: 'center', justifyContent: 'flex-start',
       background: '#020409', padding: '32px', paddingBottom: 80, overflowY: 'auto',
     }}>
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        style={{ textAlign: 'center', marginBottom: 24, maxWidth: 600 }}
-      >
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, letterSpacing: '0.3em', color: 'rgba(0,212,255,0.6)', marginBottom: 16 }}>
+      <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }}
+        style={{ textAlign: 'center', marginBottom: 20, maxWidth: 700, width: '100%' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, letterSpacing: '0.3em', color: 'rgba(0,212,255,0.6)', marginBottom: 12 }}>
           MISSION COMPLETE
         </div>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(32px, 5vw, 56px)', fontWeight: 900, color: '#fff', marginBottom: 12 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px, 4vw, 52px)', fontWeight: 900, color: '#fff', marginBottom: 10 }}>
           {config?.name}
         </div>
-        <p style={{ fontFamily: 'var(--font-body)', fontSize: 16, color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }}>
-          Your mission has reached its objective. It is time to determine the final disposition of the spacecraft.
+        <p style={{ fontFamily: 'var(--font-body)', fontSize: 15, color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }}>
+          The mission has reached its final condition. Review the spacecraft status below and select the end-of-mission disposition.
         </p>
+      </motion.div>
+
+      {/* Live Mission Final Status Dashboard */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+        style={{ width: '100%', maxWidth: 800, background: 'rgba(5,12,25,0.85)', border: '1px solid rgba(0,212,255,0.2)', borderRadius: 14, padding: '20px 24px', marginBottom: 28 }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.7)', letterSpacing: '0.2em', marginBottom: 16 }}>
+          SPACECRAFT FINAL STATUS — LIVE TELEMETRY
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+          {[
+            { label: 'SPACECRAFT HEALTH', value: `${(telemetry?.overallHealth ?? 0).toFixed(1)}%`, color: (telemetry?.overallHealth ?? 0) > 70 ? '#00ff88' : (telemetry?.overallHealth ?? 0) > 40 ? '#ff8c00' : '#ff2d55' },
+            { label: 'MISSION DURATION', value: `DAY ${missionDay.toFixed(1)}`, color: '#00d4ff' },
+            { label: 'EST. RUL', value: `${Math.max(0, rulDays).toFixed(1)} DAYS`, color: rulDays > 30 ? '#00ff88' : rulDays > 10 ? '#ff8c00' : '#ff2d55' },
+            { label: 'RESOURCES', value: `${resourceReserve.toFixed(0)}%`, color: resourceReserve > 50 ? '#00ff88' : resourceReserve > 20 ? '#ff8c00' : '#ff2d55' },
+            { label: 'MISSION RISK', value: (aiAnalysis.riskLevel ?? 'low').toUpperCase(), color: aiAnalysis.riskLevel === 'critical' ? '#ff2d55' : aiAnalysis.riskLevel === 'high' ? '#ff8c00' : '#00ff88' },
+            { label: 'OBJECTIVES', value: `${Math.round(objectiveProgress)}%`, color: objectiveProgress >= 100 ? '#00ff88' : '#00d4ff' },
+            { label: 'TRAJECTORY', value: (telemetry?.orbit?.phaseDesc ?? 'NOMINAL').toUpperCase().slice(0, 18), color: '#00d4ff' },
+            { label: 'MILESTONES', value: `${milestones.filter(m => m.completed).length}/${milestones.length}`, color: '#00ff88' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ padding: '10px 12px', background: 'rgba(0,0,0,0.3)', borderRadius: 8 }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 7.5, color: 'rgba(255,255,255,0.35)', marginBottom: 4 }}>{label}</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color, lineHeight: 1.2 }}>{value}</div>
+            </div>
+          ))}
+        </div>
       </motion.div>
 
       {/* VYOM AI Farewell Assessment Panel */}
@@ -120,7 +155,7 @@ export function DispositionScreen() {
       {/* Disposition options */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 20, width: '100%', maxWidth: 900, marginBottom: 40 }}>
         {DISPOSITIONS.map((d, i) => {
-          const isRecommended = farewellAssessment?.recommended_option === d.type;
+          const isRecommended = computedRecommendation === d.type;
           return (
           <motion.div
             key={d.type}
@@ -327,6 +362,9 @@ export function FarewellScreen() {
           </div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: '#fff', fontWeight: 700 }}>
             "Thank you, {config?.name}."
+          </div>
+          <div style={{ fontFamily: 'var(--font-body)', fontSize: 14, color: 'rgba(255,255,255,0.6)', marginTop: 8, lineHeight: 1.6 }}>
+            The astronaut team has completed the mission with distinction. All telemetry, Black Box recordings, and mission records have been archived for future review.
           </div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.45)', marginTop: 6 }}>
             FINAL DISPOSITION: <span style={{ color: '#00ff88' }}>{disposition?.replace('-', ' ').toUpperCase() ?? 'COMPLETED & ARCHIVED'}</span>

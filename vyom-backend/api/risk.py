@@ -13,7 +13,19 @@ router = APIRouter(prefix="/api/missions/{mission_id}/risk", tags=["risk"])
 def get_current_risk(mission_id: str):
     sim = get_simulation(mission_id)
     if sim and hasattr(sim, 'risk_engine'):
-        return sim.risk_engine.calculate_risk(sim.state)
+        env_dict = sim.env_engine.state.__dict__ if hasattr(sim.env_engine, "state") else {}
+        rul_days = sim.rul_engine.estimate_rul(
+            sim.state, sim.fault_engine.active_faults, env_dict, sim.mission_day
+        ).get("rul_days", 365.0) if hasattr(sim, 'rul_engine') else 365.0
+        return sim.risk_engine.calculate_risk(
+            sim.state,
+            env_dict,
+            sim.fault_engine.active_faults,
+            [],
+            sim.mission_day,
+            rul_days,
+            bool(sim.config.get("crew_json")),
+        )
     return {
         "risk_score": 0.0, 
         "risk_category": "LOW", 

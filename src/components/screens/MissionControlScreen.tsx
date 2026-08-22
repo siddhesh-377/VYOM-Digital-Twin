@@ -6,14 +6,14 @@ import { useMissionStore } from '../../store/missionStore';
 import { SatelliteModel, OrbitLine } from '../three/SatelliteScene';
 import { StarField } from '../three/SpaceScene';
 import { backendWS, createAndStartMission, checkBackendHealth } from '../../services/BackendWebSocketService';
+import { MissionRiskPanel } from '../three/MissionRiskPanel';
 
 const WARP_SPEEDS = [
   { val: 1, label: '1×' },
   { val: 100, label: '100×' },
-  { val: 10000, label: '10K×' },
-  { val: 100000, label: '100K×' },
-  { val: 604800, label: '7D/S' },
-  { val: 2592000, label: 'WARP' },
+  { val: 1000, label: '1K×' },
+  { val: 6000, label: '6K×' },
+  { val: 18000, label: 'MAX' },   // 18K× = physics-stable ceiling (~4.8 s/day)
 ];
 
 function TelemetryMini({ label, value, unit, color = '#00d4ff', status }: {
@@ -57,6 +57,16 @@ function HealthRing({ value }: { value: number }) {
       </text>
     </svg>
   );
+}
+
+/** Format the fractional part of a mission day as an elapsed clock (Dd HH:MM:SS). */
+export function formatElapsed(missionDay: number): string {
+  const totalSeconds = Math.max(0, Math.floor(missionDay * 86400));
+  const d = Math.floor(totalSeconds / 86400);
+  const h = Math.floor((totalSeconds % 86400) / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${d}d ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 export function MissionControlScreen() {
@@ -178,9 +188,13 @@ export function MissionControlScreen() {
           </span>
         </div>
 
-        {/* Mission Day */}
+        {/* Mission Day + elapsed sim clock (visible at real-time speed) */}
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
           DAY: <span style={{ color: '#00d4ff', fontWeight: 700 }}>{String(Math.floor(missionDay)).padStart(4, '0')}</span>
+          <span style={{ marginLeft: 6, fontSize: 8.5, color: timeMultiplier === 1 && missionDay < 0.02 ? '#ff8c00' : 'rgba(255,255,255,0.45)' }}>
+            · T+{formatElapsed(missionDay)}
+            {timeMultiplier === 1 && missionDay < 0.02 && ' (1× = 24h/day — use warp ↑)'}
+          </span>
         </div>
 
         {activeThreats.length > 0 && (
@@ -220,7 +234,7 @@ export function MissionControlScreen() {
                   borderRadius: 3, color: timeMultiplier === s.val ? '#00d4ff' : 'rgba(255,255,255,0.4)',
                   cursor: 'pointer',
                 }}
-                title={s.val === 604800 ? '1 second = 7 days' : s.val === 2592000 ? '1 second = 30 days warp' : `${s.label} speed`}
+                title={s.val === 18000 ? 'Maximum physics-stable warp (~4.8 s per mission day)' : `${s.label} speed`}
               >
                 {s.label}
               </button>
@@ -473,6 +487,10 @@ export function MissionControlScreen() {
                 <TelemetryMini label="PITCH" value={telemetry.attitude.pitchDeg.toFixed(2)} unit="°" />
               </div>
             </div>
+
+            {/* ── v3.0 additive: Operational Decision Support risk panel ── */}
+            <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+            <MissionRiskPanel />
           </>
         )}
       </div>

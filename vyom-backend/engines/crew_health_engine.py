@@ -37,6 +37,13 @@ class CrewHealthEngine:
                 'suit_pressure_kpa': 101.3,
                 'is_eva': False,
                 'activity': 'monitoring',
+                'location': 'Command Module',
+                'spacecraft_module': 'CM',
+                'current_task': 'Systems Monitoring',
+                'task_duration_min': 0.0,
+                'checklist_status': 'in-progress',
+                'comm_status': 'nominal',
+                'tether_status': None,
                 'data_quality': 'simulated'
             }
 
@@ -144,8 +151,20 @@ class CrewHealthEngine:
             if is_eva:
                 state['eva_duration_min'] += dt_s / 60.0
                 state['suit_pressure_kpa'] = 29.6 + random.gauss(0, 0.2)
+                state['location'] = 'EVA — Outside Spacecraft'
+                state['spacecraft_module'] = 'EVA'
+                state['tether_status'] = 'attached'
             else:
                 state['suit_pressure_kpa'] = 101.3 + random.gauss(0, 0.2)
+                state['tether_status'] = None
+
+            # Task tracking: duration accumulates while the task is unchanged
+            if state.get('current_task') != state.get('activity'):
+                state['current_task'] = state.get('activity', 'monitoring').title()
+                state['task_duration_min'] = 0.0
+            else:
+                state['task_duration_min'] = state.get('task_duration_min', 0.0) + dt_s / 60.0
+            state['location'] = state.get('location') or 'Command Module'
                 
             state['data_quality'] = 'simulated'
             

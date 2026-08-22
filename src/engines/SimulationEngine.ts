@@ -579,7 +579,7 @@ function tickAI() {
 
 function tickObjective() {
   const store = useMissionStore.getState();
-  const { missionDay, milestones, status } = store;
+  const { missionDay, milestones, status, totalMissionDurationDays } = store;
   if (status !== 'active' && status !== 'threatened' && status !== 'recovering') return;
 
   if (milestones.length === 0) return;
@@ -605,14 +605,30 @@ function tickObjective() {
     }
   }
 
-  const milestonePct = (completedCount / milestones.length) * 100;
-  const lifetimeDays = Math.max(16, (store.estimatedLifetimeYears || 1.5) * 365 * 0.5);
-  const dayProgress = (missionDay / lifetimeDays) * 100;
-  const combined = Math.min(100, Math.round(milestonePct * 0.7 + dayProgress * 0.3));
-  
-  store.setObjectiveProgress(combined);
+  // OBJECTIVE PROGRESS = pure milestone completion percentage
+  const milestonePct = Math.round((completedCount / milestones.length) * 100);
+  store.setObjectiveProgress(milestonePct);
 
-  if (combined >= 100 && status === 'active') {
+  // Auto mission-complete: all milestones done, OR elapsed days exceeded planned duration
+  const allDone = completedCount >= milestones.length;
+  const timeExpired = totalMissionDurationDays > 0 && missionDay >= totalMissionDurationDays;
+
+  if ((allDone || timeExpired) && status === 'active') {
+    // Log privacy-safe farewell event
+    const farewellEvent: BlackBoxEvent = {
+      id: `ev-farewell-${Date.now()}`,
+      timestamp: Date.now(),
+      missionDay,
+      eventType: 'milestone',
+      severity: 'nominal',
+      description: allDone
+        ? `MISSION COMPLETE — All ${milestones.length} mission objectives achieved at Day ${missionDay.toFixed(1)}. The astronaut team has successfully completed the mission. Farewell sequence initiated.`
+        : `MISSION COMPLETE — Planned mission duration of ${totalMissionDurationDays} days reached at Day ${missionDay.toFixed(1)}. The astronaut team has completed all assigned operations. Farewell sequence initiated.`,
+      source: 'Mission Control',
+      immutable: true,
+    };
+    store.logEvent(farewellEvent);
+    store.setObjectiveProgress(100);
     store.completeMission();
   }
 }
@@ -688,6 +704,28 @@ function onClockTick(payload: { realDelta: number; simDelta: number; simDays: nu
       timestamp: Date.now(),
     };
     store.pushOrbitPoint(pt);
+  }
+
+  // Push crew vitals history every 10 ticks for chart data
+  if (payload.tickCount % 10 === 0 && telemetry.crew && telemetry.crew.length > 0) {
+    const now = Date.now();
+    for (const member of telemetry.crew) {
+      store.pushCrewVitalSample(member.id, {
+        missionDay: store.missionDay,
+        timestamp: now,
+        heartRateBpm: member.heartRateBpm,
+        spo2Percent: member.spo2Percent,
+        respirationBpm: member.respirationBpm,
+        coreTempC: member.coreTempC,
+        stressIndex: member.stressIndex,
+        fatigueIndex: member.fatigueIndex ?? 0,
+        hydrationPercent: member.hydrationPercent ?? 75,
+        radiationDoseMsv: member.radiationDoseMsv,
+        bloodPressureSys: member.bloodPressureSys,
+        bloodPressureDia: member.bloodPressureDia,
+        workloadIndex: member.workloadIndex,
+      });
+    }
   }
 
   if (payload.tickCount % 30 === 0) tickAI();

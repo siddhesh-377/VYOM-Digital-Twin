@@ -7,6 +7,7 @@ import { useMissionStore } from '../../store/missionStore';
 import { CelestialTextures } from '../three/CelestialTextures';
 import { Earth } from '../three/SpaceScene';
 import { SatelliteModel, OrbitLine } from '../three/SatelliteScene';
+import { backendWS, BACKEND_API_URL } from '../../services/BackendWebSocketService';
 
 // ==========================================
 // CELESTIAL DATA SPECIFICATIONS
@@ -774,6 +775,114 @@ function UniverseSatellite({
   );
 }
 
+// ── v3.0 additive: Mission Trajectory Monitoring Layer ──────────────────────
+// Renders the selected mission's planned/predicted trajectory around Earth in
+// the existing Universe visualization. Purely additive: no existing animation,
+// object, camera behavior or display is modified.
+function MissionTrajectoryOverlay({ simTime, visible }: { simTime: number; visible: boolean }) {
+  const config = useMissionStore((s) => s.config);
+  const connected = backendWS.isConnected;
+  const missionId = config?.id;
+  const [traj, setTraj] = useState<any>(null);
+
+  useEffect(() => {
+    if (!visible || !connected || !missionId) { setTraj(null); return; }
+    let cancelled = false;
+    const load = () => {
+      fetch(`${BACKEND_API_URL}/api/missions/${missionId}/trajectory`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => { if (!cancelled) setTraj(d); })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [visible, connected, missionId]);
+
+  // Live Earth scene position (same formula as PlanetObject)
+  const earthRef = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (!earthRef.current) return;
+    const e = CELESTIAL_DATA.earth;
+    const angle = simTime * e.orbitSpeed * 0.08;
+    earthRef.current.position.set(Math.cos(angle) * e.orbitDistance, 0, Math.sin(angle) * e.orbitDistance);
+  });
+
+  const plannedLine = useMemo(() => {
+    if (!traj) return null;
+    const e = CELESTIAL_DATA.earth;
+    const toScene = (p: any): THREE.Vector3 => {
+      const r = e.radius * (1.15 + Math.min((p.alt_km ?? 400) / 6371, 3) * 2.2);
+      const latR = ((p.lat ?? 0) * Math.PI) / 180;
+      const lngR = ((p.lng ?? 0) * Math.PI) / 180;
+      return new THREE.Vector3(
+        r * Math.cos(latR) * Math.cos(lngR),
+        r * Math.sin(latR),
+        -r * Math.cos(latR) * Math.sin(lngR)
+      );
+    };
+    const pts = (traj.planned_path ?? []).slice(0, 60).map(toScene);
+    return pts.length > 1
+      ? new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: '#00d4ff', transparent: true, opacity: 0.65 }))
+      : null;
+  }, [traj]);
+
+  const futureLine = useMemo(() => {
+    if (!traj) return null;
+    const e = CELESTIAL_DATA.earth;
+    const toScene = (p: any): THREE.Vector3 => {
+      const r = e.radius * (1.15 + Math.min((p.alt_km ?? 400) / 6371, 3) * 2.2);
+      const latR = ((p.lat ?? 0) * Math.PI) / 180;
+      const lngR = ((p.lng ?? 0) * Math.PI) / 180;
+      return new THREE.Vector3(
+        r * Math.cos(latR) * Math.cos(lngR),
+        r * Math.sin(latR),
+        -r * Math.cos(latR) * Math.sin(lngR)
+      );
+    };
+    const pts = (traj.predicted_future ?? []).map(toScene);
+    return pts.length > 1
+      ? new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: '#00ff88', transparent: true, opacity: 0.5 }))
+      : null;
+  }, [traj]);
+
+  const maneuverPositions = useMemo(() => {
+    if (!traj) return [];
+    const e = CELESTIAL_DATA.earth;
+    const toScene = (p: any): THREE.Vector3 => {
+      const r = e.radius * (1.15 + Math.min((p.alt_km ?? 400) / 6371, 3) * 2.2);
+      const latR = ((p.lat ?? 0) * Math.PI) / 180;
+      const lngR = ((p.lng ?? 0) * Math.PI) / 180;
+      return new THREE.Vector3(
+        r * Math.cos(latR) * Math.cos(lngR),
+        r * Math.sin(latR),
+        -r * Math.cos(latR) * Math.sin(lngR)
+      );
+    };
+    return ((traj.maneuver_points ?? []) as any[]).slice(0, 8).map(toScene);
+  }, [traj]);
+
+  if (!visible || !traj) return null;
+
+  const e = CELESTIAL_DATA.earth;
+
+  return (
+    <group ref={earthRef}>
+      {plannedLine && <primitive object={plannedLine} />}
+      {futureLine && <primitive object={futureLine} />}
+      {/* Maneuver points */}
+      {maneuverPositions.map((p: THREE.Vector3, i: number) => (
+        <mesh key={i} position={p}>
+          <octahedronGeometry args={[e.radius * 0.09, 0]} />
+          <meshBasicMaterial color="#ff8c00" />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 // Camera Controller with Smooth Target Following
 function CameraController({
   targetPos,
@@ -818,7 +927,9 @@ function CameraController({
         camera.position.lerp(controlsRef.current.target.clone().add(desiredCamOffset), 0.06);
       }
     }
-    controlsRef.current.update();
+    // NOTE: do NOT call controls.update() here — drei's OrbitControls already
+    // applies its damped update once per frame. Calling it twice double-applies
+    // the damping factor, which made zooming feel unstable/jerky (the zoom glitch).
   });
 
   return null;
@@ -833,6 +944,8 @@ export function UniverseScreen() {
   const [showOrbits, setShowOrbits] = useState<boolean>(true);
   const [isFreeCam, setIsFreeCam] = useState<boolean>(false);
   const [simTime, setSimTime] = useState<number>(0);
+  // v3.0 additive: mission trajectory monitoring layer toggle
+  const [showTrajectoryLayer, setShowTrajectoryLayer] = useState<boolean>(false);
 
   const controlsRef = useRef<any>(null);
   const config = useMissionStore((s) => s.config);
@@ -873,12 +986,13 @@ export function UniverseScreen() {
     <div style={{ width: '100%', height: '100%', position: 'relative', background: '#010308', overflow: 'hidden' }}>
       {/* 3D WEBGL UNIVERSE CANVAS */}
       <Canvas
-        camera={{ position: [88, 14, 88], fov: 45, near: 0.1, far: 5000 }}
+        camera={{ position: [88, 14, 88], fov: 45, near: 0.5, far: 5000 }}
         gl={{
           antialias: true,
           powerPreference: 'high-performance',
           toneMapping: THREE.ACESFilmicToneMapping,
           toneMappingExposure: 1.15,
+          logarithmicDepthBuffer: true,
         }}
         dpr={[1, 2]}
       >
@@ -966,6 +1080,9 @@ export function UniverseScreen() {
             if (selectedId === 'satellite') handlePositionUpdate(pos);
           }}
         />
+
+        {/* 6. v3.0 additive: mission trajectory monitoring layer (opt-in) */}
+        <MissionTrajectoryOverlay simTime={simTime} visible={showTrajectoryLayer} />
       </Canvas>
 
       {/* ==========================================
@@ -1148,6 +1265,21 @@ export function UniverseScreen() {
           }}
         >
           {showOrbits ? 'ORBITS: ON' : 'ORBITS: OFF'}
+        </button>
+
+        {/* v3.0 additive: trajectory monitoring layer toggle */}
+        <button
+          onClick={() => setShowTrajectoryLayer(!showTrajectoryLayer)}
+          style={{
+            padding: '6px 8px', borderRadius: 12,
+            background: showTrajectoryLayer ? 'rgba(255,140,0,0.2)' : 'transparent',
+            border: `1px solid ${showTrajectoryLayer ? '#ff8c00' : 'rgba(255,255,255,0.08)'}`,
+            color: showTrajectoryLayer ? '#ff8c00' : 'rgba(255,255,255,0.5)',
+            fontFamily: 'var(--font-mono)', fontSize: 9, cursor: 'pointer', whiteSpace: 'nowrap'
+          }}
+          title="Overlay the selected mission's planned/predicted trajectory around Earth"
+        >
+          {showTrajectoryLayer ? 'TRAJECTORY: ON' : 'TRAJECTORY: OFF'}
         </button>
 
         {/* Time Multiplier Buttons */}
