@@ -485,7 +485,10 @@ export const useMissionStore = create<MissionStore>()(
         })),
 
       logEvent: (event) =>
-        set((s) => ({ blackBox: [...s.blackBox, event] })),
+        set((s) => {
+          if (s.blackBox.some((e) => e.id === event.id)) return {};
+          return { blackBox: [...s.blackBox, event] };
+        }),
 
       pushOrbitPoint: (pt) =>
         set((s) => ({

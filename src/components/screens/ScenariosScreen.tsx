@@ -248,9 +248,9 @@ export function ScenariosScreen() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
               <AnimatePresence>
-                {recentEvents.map((ev) => (
+                {recentEvents.map((ev, idx) => (
                   <motion.div
-                    key={ev.id}
+                    key={`${ev.id || 'ev'}-${idx}`}
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
                     style={{
