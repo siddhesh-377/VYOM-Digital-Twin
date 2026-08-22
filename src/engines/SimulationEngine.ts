@@ -444,124 +444,319 @@ function tickTelemetry(simDeltaMs: number): Telemetry {
   };
 }
 
-// --- VYOM Multi-Step AI Reasoning Pipeline ---
+// --- 6-Second High-Precision VYOM AI 7-Stage Reasoning Pipeline ---
+let liveTimerInterval: any = null;
+let aiSafetyTimeout: any = null;
+let currentPipelineIncidentId: string | null = null;
+let currentPipelineThreat: ThreatScenario | null = null;
+
+function getVirtualRecoveryTime(threatType: string): { seconds: number; str: string } {
+  switch (threatType) {
+    case 'solar-storm':
+    case 'solar-flare':
+    case 'radiation_spike':
+      return { seconds: 13500, str: '3h 45m' };
+    case 'power-failure':
+    case 'battery_failure':
+      return { seconds: 9000, str: '2h 30m' };
+    case 'thermal-failure':
+    case 'thermal_overheating':
+      return { seconds: 6600, str: '1h 50m' };
+    case 'attitude-failure':
+    case 'attitude_control_failure':
+      return { seconds: 2700, str: '45m' };
+    case 'communication-failure':
+    case 'comm_failure':
+      return { seconds: 1500, str: '25m' };
+    case 'asteroid':
+    case 'debris':
+      return { seconds: 4500, str: '1h 15m' };
+    default:
+      return { seconds: 5400, str: '1h 30m' };
+  }
+}
+
+export function cancelAIPipeline(reason = 'Manual Operator Override') {
+  if (liveTimerInterval) { clearInterval(liveTimerInterval); liveTimerInterval = null; }
+  if (aiSafetyTimeout) { clearTimeout(aiSafetyTimeout); aiSafetyTimeout = null; }
+  aiPipelineTimer = null;
+
+  const store = useMissionStore.getState();
+  if (currentPipelineIncidentId) {
+    const incId = currentPipelineIncidentId;
+    const existing = store.incidents.find(i => i.id === incId);
+    if (existing && existing.status !== 'resolved') {
+      const updated = store.incidents.map(i => i.id === incId ? { ...i, status: 'AI TIMEOUT' as const, is_timeout: true, recovery_mode: 'manual' as const } : i);
+      useMissionStore.setState({ incidents: updated });
+    }
+  }
+
+  store.setAIAnalysis({
+    ...store.aiAnalysis,
+    liveStage: 'AI TIMEOUT',
+    isTimeout: true,
+    phase: 'monitoring',
+  });
+
+  store.logEvent({
+    id: `ev-ai-abort-${Date.now()}`,
+    timestamp: Date.now(),
+    missionDay: store.missionDay,
+    eventType: 'ai',
+    severity: 'warning',
+    description: `VYOM AI Pipeline aborted (${reason}). Ground Control manual recovery enabled.`,
+    source: 'VYOM Autonomous Kernel',
+    immutable: true,
+  });
+}
+
 function launchAIPipeline(threat: ThreatScenario) {
   const store = useMissionStore.getState();
-  if (aiPipelineTimer) return; // already in flight
+  if (aiPipelineTimer) return; // already active
 
   const startTime = Date.now();
+  const incidentId = `INC-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+  currentPipelineIncidentId = incidentId;
+  currentPipelineThreat = threat;
+
+  const { seconds: virtualSec, str: virtualStr } = getVirtualRecoveryTime(threat.type);
+
+  // 1. Initialize or register Incident in store
+  const newIncident = {
+    id: incidentId,
+    mission_day: parseFloat(store.missionDay.toFixed(2)),
+    normalized_fault_category: threat.type,
+    normalized_subsystem: threat.type.includes('power') ? 'Power (EPS)' : threat.type.includes('thermal') ? 'Thermal Control' : threat.type.includes('attitude') ? 'ADCS' : threat.type.includes('comm') ? 'Communications' : 'Avionics',
+    severity: threat.severity ?? 'critical',
+    status: 'detected' as const,
+    description: `${threat.name}: ${threat.description}`,
+    detection_time: startTime,
+    recovery_mode: 'ai' as const,
+    virtual_recovery_time_s: virtualSec,
+    virtual_recovery_time_str: virtualStr,
+    procedures: [
+      { id: 'p1', fault_type: threat.type, name: `Autonomous Isolation (${threat.name})`, description: 'Reroute secondary power and isolate faulted bus.', steps: ['Detect variance', 'Isolate node', 'Re-energize backup'], estimated_time_s: 5, success_probability: 0.98, risk_level: 'low' as const },
+      { id: 'p2', fault_type: threat.type, name: `Manual Ground Override (${threat.name})`, description: 'Direct telecommand uplink for manual component reset.', steps: ['Authenticate command', 'Assert reset flag', 'Verify telemetry'], estimated_time_s: 30, success_probability: 0.95, risk_level: 'medium' as const },
+    ],
+  };
+
+  useMissionStore.setState({ incidents: [newIncident, ...store.incidents.filter(i => i.id !== incidentId)] });
+
   currentAiSteps = [
-    { step: 1, phase: 'ingesting', title: 'Telemetry Ingestion & Sensor Anomaly Isolation', detail: `Extracting z-score sensor variance: ${threat.name}. Bus voltage, temperature, and attitude deltas isolated.`, status: 'running', confidence: 99.4, timestamp: startTime },
-    { step: 2, phase: 'diagnosing', title: 'Diagnostic Neural Root-Cause Classification', detail: `Feedforward transformer classifier evaluating single-event upsets & physical subsystem stress.`, status: 'pending', confidence: 96.8, timestamp: startTime + 3000 },
-    { step: 3, phase: 'predicting', title: 'Monte Carlo Failure Projection (5,000 runs)', detail: `Simulating catastrophic subsystem cascade risk: 88.4% probability within 6.2 minutes without intervention.`, status: 'pending', confidence: 94.2, timestamp: startTime + 6000 },
-    { step: 4, phase: 'optimizing', title: 'Multi-Strategy Autonomous Countermeasure Optimization', detail: `Evaluating 4 recovery pathways. Optimal sequence selected: power rerouting, RCS reaction damping & thermal pump override.`, status: 'pending', confidence: 98.1, timestamp: startTime + 9000 },
-    { step: 5, phase: 'executing', title: 'Step-by-Step Command Execution & Closed-Loop Verification', detail: `Broadcasting encrypted OBC command sequence. Telemetry stabilization confirmed.`, status: 'pending', confidence: 99.8, timestamp: startTime + 12000 },
+    { step: 1, phase: 'ingesting', title: 'Error Received: Anomaly Signal Ingestion', detail: `Sensor anomaly isolated for ${threat.name}. Bus variance and telemetry limits exceeded.`, status: 'running', confidence: 99.4, timestamp: startTime },
+    { step: 2, phase: 'analyzing', title: 'Analysing Cross-Subsystem Telemetry Correlation', detail: 'Evaluating Kalman residuals across power, thermal, ADCS, and payload channels.', status: 'pending', confidence: 97.2, timestamp: startTime + 500 },
+    { step: 3, phase: 'diagnosing', title: 'Diagnosing Root Cause & Failure Classification', detail: 'Pattern-matching signature against aerospace fault matrix. Root cause isolated.', status: 'pending', confidence: 95.8, timestamp: startTime + 1300 },
+    { step: 4, phase: 'optimizing', title: 'Recovery Decision: Countermeasure Optimization', detail: 'Autonomous strategy selected via expected-loss minimization. Command queue built.', status: 'pending', confidence: 98.4, timestamp: startTime + 2300 },
+    { step: 5, phase: 'executing', title: 'Executing Autonomous Closed-Loop Mitigation', detail: 'Broadcasting encrypted telecommands to Digital Twin avionics and power bus.', status: 'pending', confidence: 99.2, timestamp: startTime + 3300 },
+    { step: 6, phase: 'verifying', title: 'Verifying Sensor Stabilization & Envelope Recovery', detail: 'Validating telemetry convergence across 10 consecutive ticks.', status: 'pending', confidence: 99.8, timestamp: startTime + 4300 },
+    { step: 7, phase: 'verifying', title: 'Resolved: Spacecraft Systems Nominal', detail: 'Telemetry nominal. Incident closed and archived to Black Box.', status: 'pending', confidence: 100.0, timestamp: startTime + 5000 },
   ];
 
-  const updateAIState = (phaseIndex: number, riskLevel: AIAnalysis['riskLevel']) => {
+  const updateAIState = (stageName: any, phaseIndex: number, riskLevel: AIAnalysis['riskLevel']) => {
     currentAiSteps = currentAiSteps.map((s, idx) => ({
       ...s,
       status: idx < phaseIndex ? 'complete' : idx === phaseIndex ? 'running' : 'pending',
     }));
 
-    const activeStep = currentAiSteps[Math.min(phaseIndex, currentAiSteps.length - 1)];
+    const elapsedNow = (Date.now() - startTime) / 1000;
+    const remainingNow = Math.max(0, 6.0 - elapsedNow);
+
     const ai: AIAnalysis = {
-      phase: activeStep.phase as any,
-      anomalyDetected: phaseIndex < 4,
+      phase: currentAiSteps[Math.min(phaseIndex, currentAiSteps.length - 1)].phase as any,
+      anomalyDetected: phaseIndex < 6,
       anomalyDescription: `${threat.name} — ${threat.description}`,
       predictedFailure: threat.type === 'solar-storm' ? 'Radiation exposure & communication blackout'
         : threat.type === 'power-failure' ? 'Life support & bus voltage collapse'
         : 'Subsystem degradation',
-      probability: phaseIndex >= 4 ? 0.05 : 0.88,
-      timeToFailureMin: phaseIndex >= 4 ? 0 : 6.2,
+      probability: phaseIndex >= 5 ? 0.02 : 0.88,
+      timeToFailureMin: phaseIndex >= 5 ? 0 : 6.2,
       recommendedAction: threat.type === 'solar-storm' ? 'Direct crew to radiation shelter · Angle solar arrays edge-on to flux'
         : threat.type === 'power-failure' ? 'Engage redundant fuel cells · Shed auxiliary payload power'
         : 'Execute autonomous attitude dampening & thermal shunt valve activation',
-      confidence: activeStep.confidence,
+      confidence: currentAiSteps[Math.min(phaseIndex, currentAiSteps.length - 1)].confidence,
       riskLevel,
       dataSource: 'ai-prediction',
       reasoningSteps: [...currentAiSteps],
       neuralActivations: [0.94, 0.88, 0.96, 0.72, 0.99, 0.85],
       monteCarloRuns: 5000,
-      selectedStrategy: 'Autonomous Multi-Subsystem Closed-Loop Recovery Sequence α-4',
-      recoverySecondsRemaining: Math.max(0, 15 - phaseIndex * 3),
+      selectedStrategy: `Autonomous Multi-Subsystem Recovery Strategy α-4`,
+      recoverySecondsRemaining: Math.max(0, parseFloat(remainingNow.toFixed(1))),
+      liveStage: stageName,
+      realElapsedSeconds: parseFloat(elapsedNow.toFixed(2)),
+      realRemainingSeconds: parseFloat(remainingNow.toFixed(2)),
+      virtualRecoveryTimeStr: virtualStr,
+      virtualRecoveryTimeSeconds: virtualSec,
+      isTimeout: false,
+      incidentId,
     };
-    store.setAIAnalysis(ai);
+    useMissionStore.getState().setAIAnalysis(ai);
   };
 
-  // Step 1: Ingesting
-  updateAIState(0, 'critical');
+  // 2. Continuous 50ms Live Timer
+  if (liveTimerInterval) clearInterval(liveTimerInterval);
+  liveTimerInterval = setInterval(() => {
+    const elapsed = (Date.now() - startTime) / 1000;
+    const remaining = Math.max(0, 6.0 - elapsed);
+    const s = useMissionStore.getState();
+    if (s.aiAnalysis.anomalyDetected && !s.aiAnalysis.isTimeout) {
+      s.setAIAnalysis({
+        ...s.aiAnalysis,
+        realElapsedSeconds: parseFloat(elapsed.toFixed(2)),
+        realRemainingSeconds: parseFloat(remaining.toFixed(2)),
+      });
+    }
+  }, 50);
+
+  // 3. Stage 1: Error Received (0ms)
+  updateAIState('Error Received', 0, 'critical');
   const action: AutonomousAction = {
     id: `action-${Date.now()}`,
-    triggeredAt: Date.now(),
+    triggeredAt: startTime,
     type: threat.type,
-    description: `Autonomous Multi-Phase Mitigation: ${threat.name}`,
+    description: `6s Fast Autonomous Mitigation: ${threat.name}`,
     status: 'executing',
   };
   store.addAction(action);
 
   store.logEvent({
     id: `ev-ai-init-${Date.now()}`,
-    timestamp: Date.now(),
+    timestamp: startTime,
     missionDay: store.missionDay,
     eventType: 'ai',
     severity: 'warning',
-    description: `VYOM AI: Initiated 5-Phase Diagnostic & Countermeasure Pipeline for ${threat.name}.`,
+    description: `VYOM AI: Error received [${incidentId}] for ${threat.name}. 6-second analysis pipeline initiated.`,
     source: 'VYOM Autonomous Kernel',
     immutable: true,
   });
 
-  // Step 2: Diagnosing (at 3s)
-  setTimeout(() => updateAIState(1, 'critical'), 3000);
-
-  // Step 3: Predicting (at 6s)
-  setTimeout(() => updateAIState(2, 'high'), 6000);
-
-  // Step 4: Optimizing (at 9s)
-  setTimeout(() => updateAIState(3, 'medium'), 9000);
-
-  // Step 5: Executing & Verifying (at 12s)
+  // 4. Stage 2: Analysing (at 500ms)
   setTimeout(() => {
-    updateAIState(4, 'low');
-    store.completeAction(action.id, 'Countermeasures deployed successfully · Telemetry nominal');
-    store.mitigateThreat(threat.id);
-    threatEffects = {};
-    simState.health = Math.min(simState.health + 20, 100);
+    if (currentPipelineIncidentId === incidentId) {
+      updateAIState('Analysing', 1, 'critical');
+      const st = useMissionStore.getState();
+      const updated = st.incidents.map(i => i.id === incidentId ? { ...i, status: 'diagnosing' as const } : i);
+      useMissionStore.setState({ incidents: updated });
+    }
+  }, 500);
 
-    store.logEvent({
-      id: `ev-ai-recovered-${Date.now()}`,
-      timestamp: Date.now(),
-      missionDay: store.missionDay,
-      eventType: 'recovery',
-      severity: 'nominal',
-      description: `Recovery verified. All sensor parameters converged within nominal operating envelope.`,
-      source: 'VYOM Autonomous Kernel',
-      immutable: true,
-    });
-  }, 12000);
-
-  // Complete (at 16s)
+  // 5. Stage 3: Diagnosing (at 1300ms)
   setTimeout(() => {
-    currentAiSteps = currentAiSteps.map((s) => ({ ...s, status: 'complete' }));
-    store.setAIAnalysis({
-      phase: 'monitoring',
-      anomalyDetected: false,
-      anomalyDescription: '',
-      predictedFailure: '',
-      probability: 0,
-      timeToFailureMin: 0,
-      recommendedAction: '',
-      confidence: 99.9,
-      riskLevel: 'low',
-      dataSource: 'ai-prediction',
-      reasoningSteps: currentAiSteps,
-      neuralActivations: [0.1, 0.05, 0.08, 0.02, 0.04, 0.01],
-      monteCarloRuns: 5000,
-      selectedStrategy: 'Systems Nominal',
-      recoverySecondsRemaining: 0,
-    });
-    aiPipelineTimer = null;
-  }, 16000);
+    if (currentPipelineIncidentId === incidentId) {
+      updateAIState('Diagnosing', 2, 'high');
+      const st = useMissionStore.getState();
+      const updated = st.incidents.map(i => i.id === incidentId ? { ...i, diagnosis_time: Date.now() } : i);
+      useMissionStore.setState({ incidents: updated });
+    }
+  }, 1300);
+
+  // 6. Stage 4: Recovery Decision (at 2300ms)
+  setTimeout(() => {
+    if (currentPipelineIncidentId === incidentId) {
+      updateAIState('Recovery Decision', 3, 'medium');
+      const st = useMissionStore.getState();
+      const updated = st.incidents.map(i => i.id === incidentId ? { ...i, decision_time: Date.now() } : i);
+      useMissionStore.setState({ incidents: updated });
+    }
+  }, 2300);
+
+  // 7. Stage 5: Executing (at 3300ms)
+  setTimeout(() => {
+    if (currentPipelineIncidentId === incidentId) {
+      updateAIState('Executing', 4, 'medium');
+      const st = useMissionStore.getState();
+      const updated = st.incidents.map(i => i.id === incidentId ? { ...i, recovery_start: Date.now(), status: 'recovering' as const } : i);
+      useMissionStore.setState({ incidents: updated });
+    }
+  }, 3300);
+
+  // 8. Stage 6: Verifying (at 4300ms)
+  setTimeout(() => {
+    if (currentPipelineIncidentId === incidentId) {
+      updateAIState('Verifying', 5, 'low');
+    }
+  }, 4300);
+
+  // 9. Stage 7: Resolved (~5000ms — well within 6.0s hard budget)
+  setTimeout(() => {
+    if (currentPipelineIncidentId === incidentId) {
+      const endTime = Date.now();
+      const totalElapsedS = parseFloat(((endTime - startTime) / 1000).toFixed(2));
+      const totalResolutionMs = endTime - startTime;
+
+      if (liveTimerInterval) { clearInterval(liveTimerInterval); liveTimerInterval = null; }
+      if (aiSafetyTimeout) { clearTimeout(aiSafetyTimeout); aiSafetyTimeout = null; }
+
+      updateAIState('Resolved', 6, 'low');
+
+      store.completeAction(action.id, `Resolved in ${totalElapsedS}s (Virtual: ${virtualStr}) · Telemetry nominal`);
+      store.mitigateThreat(threat.id);
+      threatEffects = {};
+      simState.health = Math.min(simState.health + 25, 100);
+
+      // Finalize incident
+      const st = useMissionStore.getState();
+      const finalized = st.incidents.map(i => i.id === incidentId ? {
+        ...i,
+        status: 'resolved' as const,
+        recovery_end: endTime,
+        total_resolution_ms: totalResolutionMs,
+        ai_processing_time_s: totalElapsedS,
+        is_timeout: false,
+      } : i);
+      useMissionStore.setState({ incidents: finalized });
+
+      store.logEvent({
+        id: `ev-ai-recovered-${Date.now()}`,
+        timestamp: endTime,
+        missionDay: store.missionDay,
+        eventType: 'recovery',
+        severity: 'nominal',
+        description: `RECOVERY RESOLVED: Incident [${incidentId}] ${threat.name} neutralized by VYOM AI in ${totalElapsedS}s real time (Virtual Recovery Time: ${virtualStr}). Telemetry nominal.`,
+        source: 'VYOM Autonomous Kernel',
+        immutable: true,
+      });
+
+      // After 1500ms post-resolution, transition to nominal monitoring
+      setTimeout(() => {
+        if (currentPipelineIncidentId === incidentId) {
+          currentAiSteps = currentAiSteps.map((s) => ({ ...s, status: 'complete' }));
+          store.setAIAnalysis({
+            phase: 'monitoring',
+            anomalyDetected: false,
+            anomalyDescription: '',
+            predictedFailure: '',
+            probability: 0,
+            timeToFailureMin: 0,
+            recommendedAction: '',
+            confidence: 99.9,
+            riskLevel: 'low',
+            dataSource: 'ai-prediction',
+            reasoningSteps: currentAiSteps,
+            neuralActivations: [0.1, 0.05, 0.08, 0.02, 0.04, 0.01],
+            monteCarloRuns: 5000,
+            selectedStrategy: 'Systems Nominal',
+            recoverySecondsRemaining: 0,
+            liveStage: undefined,
+            realElapsedSeconds: undefined,
+            realRemainingSeconds: undefined,
+            isTimeout: false,
+          });
+          aiPipelineTimer = null;
+          currentPipelineIncidentId = null;
+        }
+      }, 1500);
+    }
+  }, 5000);
+
+  // 10. Strict 6.0s Hard Safety Timeout Enforcer
+  aiSafetyTimeout = setTimeout(() => {
+    if (currentPipelineIncidentId === incidentId) {
+      const st = useMissionStore.getState();
+      if (st.aiAnalysis.anomalyDetected && st.aiAnalysis.liveStage !== 'Resolved') {
+        cancelAIPipeline('6.0s Hard Safety Timeout Enforced');
+      }
+    }
+  }, 6000);
 
   aiPipelineTimer = true;
 }

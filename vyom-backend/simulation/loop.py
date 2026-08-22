@@ -236,9 +236,9 @@ class MissionSimulation:
         # ── 6. Anomaly detection ─────────────────────────────────────────────
         anomalies = self.anomaly_det.detect(self.state, sim_dt_s)
 
-        # ── 7. AI Guardian (every 2s sim time to avoid hammering) ────────────
+        # ── 7. AI Guardian (every 0.5s sim time for fast 6-second response) ───
         ai_analysis = None
-        if self.elapsed_sim_s - self._last_ai_check_s >= 2.0 and anomalies:
+        if self.elapsed_sim_s - self._last_ai_check_s >= 0.5 and anomalies:
             self._last_ai_check_s = self.elapsed_sim_s
             diagnosis = self.ai_guardian.run_pipeline(anomalies, self.state)
             ai_analysis = self.ai_guardian.build_ai_analysis(diagnosis, anomalies)

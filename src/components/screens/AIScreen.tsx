@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
 import { threatEngine } from '../../engines/ThreatEngine';
 import { backendWS, injectFaultViaBackend, submitManualActionViaBackend, fetchIncidentProcedures } from '../../services/BackendWebSocketService';
+import { cancelAIPipeline } from '../../engines/SimulationEngine';
 
 const RISK_COLORS: Record<string, string> = {
   low:      '#00ff88',
@@ -13,6 +14,7 @@ const RISK_COLORS: Record<string, string> = {
 
 const PHASE_LABELS: Record<string, string> = {
   ingesting:   'INGESTING',
+  analyzing:   'ANALYZING',
   diagnosing:  'DIAGNOSING',
   predicting:  'PREDICTING',
   optimizing:  'OPTIMIZING',
@@ -21,16 +23,26 @@ const PHASE_LABELS: Record<string, string> = {
   monitoring:  'MONITORING',
 };
 
+const WORKFLOW_STAGES = [
+  'Error Received',
+  'Analysing',
+  'Diagnosing',
+  'Recovery Decision',
+  'Executing',
+  'Verifying',
+  'Resolved',
+] as const;
+
 const DEFAULT_9_STEPS = [
-  { step: 1, phase: 'ingesting',  title: 'Telemetry Ingestion & Sensor Anomaly Isolation',         detail: 'Real-time 10Hz telemetry stream. Kalman filter extracting variance bounds across 12 channels.', status: 'complete', confidence: 99.4 },
-  { step: 2, phase: 'diagnosing', title: 'Anomaly Correlation & Subsystem Affinity Mapping',        detail: 'Correlating anomaly signals and performing cross-subsystem affinity grouping.', status: 'complete', confidence: 97.2 },
-  { step: 3, phase: 'diagnosing', title: 'Root Cause Classification (Rule-Based Engineering Logic)', detail: 'Pattern-matching against 7 aerospace fault classes. Best-fit root cause identified.', status: 'complete', confidence: 94.8 },
+  { step: 1, phase: 'ingesting',  title: 'Error Received: Telemetry Ingestion & Anomaly Isolation',   detail: 'Real-time 10Hz telemetry stream. Kalman filter extracting variance bounds across 12 channels.', status: 'complete', confidence: 99.4 },
+  { step: 2, phase: 'analyzing',  title: 'Analysing Cross-Subsystem Telemetry Correlation',          detail: 'Correlating anomaly signals and performing cross-subsystem affinity grouping.', status: 'complete', confidence: 97.2 },
+  { step: 3, phase: 'diagnosing', title: 'Diagnosing Root Cause & Failure Classification',           detail: 'Pattern-matching against 7 aerospace fault classes. Best-fit root cause identified.', status: 'complete', confidence: 94.8 },
   { step: 4, phase: 'predicting', title: 'Monte Carlo Failure Projection (5,000 runs)',              detail: 'State progression simulated. Nominal predicted time to degradation: 6.2 minutes.', status: 'complete', confidence: 91.5 },
-  { step: 5, phase: 'optimizing', title: 'Multi-Strategy Countermeasure Optimization',               detail: 'Evaluating all candidate mitigation strategies. Optimal sequence selected via expected-loss minimization.', status: 'complete', confidence: 98.1 },
-  { step: 6, phase: 'executing',  title: 'Command Generation',                                       detail: 'Synthesizing ordered command queue for spacecraft state mutation.', status: 'complete', confidence: 99.0 },
-  { step: 7, phase: 'executing',  title: 'Safety Constraint Validation',                             detail: 'Checking power, thermal, and mode constraints before command dispatch.', status: 'complete', confidence: 99.8 },
-  { step: 8, phase: 'executing',  title: 'Autonomous Command Execution',                             detail: 'Commands dispatched to digital twin. Spacecraft state update in progress.', status: 'complete', confidence: 99.9 },
-  { step: 9, phase: 'verifying',  title: 'Telemetry Recovery Verification',                          detail: 'Monitoring telemetry for 10 consecutive nominal ticks before confirming recovery.', status: 'complete', confidence: 100.0 },
+  { step: 5, phase: 'optimizing', title: 'Recovery Decision: Countermeasure Optimization',           detail: 'Evaluating all candidate mitigation strategies. Optimal sequence selected via expected-loss minimization.', status: 'complete', confidence: 98.1 },
+  { step: 6, phase: 'executing',  title: 'Executing Autonomous Command Dispatch',                    detail: 'Synthesizing ordered command queue for spacecraft state mutation.', status: 'complete', confidence: 99.0 },
+  { step: 7, phase: 'executing',  title: 'Safety Constraint Validation & Telemetry Execution',       detail: 'Checking power, thermal, and mode constraints before command dispatch.', status: 'complete', confidence: 99.8 },
+  { step: 8, phase: 'verifying',  title: 'Verifying Sensor Stabilization & Envelope Recovery',        detail: 'Monitoring telemetry for consecutive nominal ticks before confirming recovery.', status: 'complete', confidence: 99.9 },
+  { step: 9, phase: 'verifying',  title: 'Resolved: Spacecraft Health Confirmed',                    detail: 'Recovery confirmed. Incident closed and archived to Black Box.', status: 'complete', confidence: 100.0 },
 ];
 
 export function AIScreen() {
@@ -159,9 +171,131 @@ export function AIScreen() {
           </div>
         </div>
 
+        {/* ── 6-Second Live AI Processing Timer Bar & Virtual Recovery Time ── */}
+        {isActive && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            style={{
+              padding: '18px 22px', marginBottom: 20,
+              background: 'linear-gradient(135deg, rgba(155,93,229,0.12) 0%, rgba(5,15,30,0.95) 100%)',
+              border: `1px solid ${ai.isTimeout ? '#ff2d55' : 'rgba(155,93,229,0.4)'}`,
+              borderRadius: 12, boxShadow: '0 0 30px rgba(155,93,229,0.15)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  background: ai.isTimeout ? '#ff2d55' : ai.liveStage === 'Resolved' ? '#00ff88' : '#9b5de5',
+                  boxShadow: `0 0 10px ${ai.isTimeout ? '#ff2d55' : '#9b5de5'}`,
+                  animation: ai.liveStage !== 'Resolved' && !ai.isTimeout ? 'ai-pulse 1.2s infinite' : 'none',
+                }} />
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: '#fff', letterSpacing: '0.1em' }}>
+                  STAGE: <span style={{ color: ai.isTimeout ? '#ff2d55' : '#9b5de5' }}>{(ai.liveStage ?? 'ANALYSING').toUpperCase()}</span>
+                </span>
+                {ai.incidentId && (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.4)', padding: '2px 6px', background: 'rgba(0,0,0,0.4)', borderRadius: 3 }}>
+                    {ai.incidentId}
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.6)' }}>
+                  REAL AI PROCESSING: <strong style={{ color: (ai.realElapsedSeconds ?? 0) > 5.0 ? '#ff8c00' : '#00d4ff' }}>{(ai.realElapsedSeconds ?? 0).toFixed(1)}s</strong> / 6.0s
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.6)' }}>
+                  REMAINING: <strong style={{ color: (ai.realRemainingSeconds ?? 6.0) < 1.0 ? '#ff2d55' : '#00ff88' }}>{(ai.realRemainingSeconds ?? 6.0).toFixed(1)}s</strong>
+                </div>
+                <div style={{
+                  padding: '4px 10px', background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.3)',
+                  borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00d4ff',
+                }}>
+                  VIRTUAL RECOVERY TIME: <strong>{ai.virtualRecoveryTimeStr ?? '2h 35m'}</strong> <span style={{ opacity: 0.6, fontSize: 7.5 }}>(PHYSICS MODEL)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* High-Precision Progress Bar */}
+            <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden', marginBottom: 14 }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.min(100, (((ai.realElapsedSeconds ?? 0) / 6.0) * 100))}%`,
+                background: ai.isTimeout ? '#ff2d55' : (ai.realElapsedSeconds ?? 0) > 5.0 ? '#ff8c00' : 'linear-gradient(90deg, #9b5de5, #00d4ff)',
+                borderRadius: 3,
+                transition: 'width 0.05s linear',
+              }} />
+            </div>
+
+            {/* 7-Stage Workflow Breadcrumb Tracker */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 6 }}>
+              {WORKFLOW_STAGES.map((stg, i) => {
+                const curIdx = WORKFLOW_STAGES.indexOf((ai.liveStage as any) ?? 'Analysing');
+                const isCurrent = ai.liveStage === stg;
+                const isPast = curIdx > i || ai.liveStage === 'Resolved';
+                return (
+                  <div key={stg} style={{
+                    padding: '8px 6px', textAlign: 'center', borderRadius: 6,
+                    background: isCurrent ? 'rgba(155,93,229,0.25)' : isPast ? 'rgba(0,255,136,0.08)' : 'rgba(0,0,0,0.3)',
+                    border: `1px solid ${isCurrent ? '#9b5de5' : isPast ? 'rgba(0,255,136,0.25)' : 'rgba(255,255,255,0.05)'}`,
+                    transition: 'all 0.2s',
+                  }}>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 7.5, color: isCurrent ? '#9b5de5' : isPast ? '#00ff88' : 'rgba(255,255,255,0.25)', marginBottom: 2 }}>
+                      {isPast ? '✓ STAGE ' + (i + 1) : `0${i + 1}`}
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, fontWeight: isCurrent ? 700 : 400, color: isCurrent ? '#fff' : isPast ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {stg}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── AI Timeout Warning & Manual Override Trigger ── */}
+        <AnimatePresence>
+          {ai.isTimeout && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              style={{
+                padding: '16px 20px', marginBottom: 20,
+                background: 'rgba(255,45,85,0.12)', border: '1px solid rgba(255,45,85,0.5)',
+                borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14,
+              }}
+            >
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700, color: '#ff2d55', marginBottom: 4 }}>
+                  ⚠ 6.0s AI PROCESSING TIMEOUT ENFORCED — SAFE CANCELLATION ACTIVE
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.7)', lineHeight: 1.4 }}>
+                  Real-world 6.0s execution ceiling reached. Active processing was terminated to avoid telemetry freeze. Ground control manual override available.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  onClick={() => setControlMode('manual')}
+                  style={{ padding: '8px 16px', background: 'rgba(0,212,255,0.2)', border: '1px solid #00d4ff', borderRadius: 6, color: '#00d4ff', fontFamily: 'var(--font-mono)', fontSize: 9, cursor: 'pointer' }}
+                >
+                  ◈ MANUAL OVERRIDE
+                </button>
+                <button
+                  onClick={() => handleTestDiagnostic('thermal_overheating', 'Thermal Retry', 'Retrying diagnostic under nominal envelope', { thermal: 2.0 })}
+                  style={{ padding: '8px 16px', background: 'rgba(155,93,229,0.2)', border: '1px solid #9b5de5', borderRadius: 6, color: '#9b5de5', fontFamily: 'var(--font-mono)', fontSize: 9, cursor: 'pointer' }}
+                >
+                  🔄 RETRY AI (6s)
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* ── Active Anomaly Alert Banner ── */}
         <AnimatePresence>
-          {isActive && (
+          {isActive && !ai.isTimeout && (
             <motion.div
               initial={{ opacity: 0, y: -12 }}
               animate={{ opacity: 1, y: 0 }}

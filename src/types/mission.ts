@@ -194,6 +194,16 @@ export interface AIReasoningStep {
   timestamp: number;
 }
 
+export type AIWorkflowStage =
+  | 'Error Received'
+  | 'Analysing'
+  | 'Diagnosing'
+  | 'Recovery Decision'
+  | 'Executing'
+  | 'Verifying'
+  | 'Resolved'
+  | 'AI TIMEOUT';
+
 export interface AIAnalysis {
   phase: 'monitoring' | 'ingesting' | 'diagnosing' | 'predicting' | 'optimizing' | 'executing' | 'verifying' | 'analyzing';
   anomalyDetected: boolean;
@@ -211,6 +221,14 @@ export interface AIAnalysis {
   selectedStrategy?: string;
   recoverySecondsRemaining?: number;
   actions?: { type: string; params: any; validated?: boolean }[];
+  // ── 6-Second Workflow Fields ──
+  liveStage?: AIWorkflowStage;
+  realElapsedSeconds?: number;
+  realRemainingSeconds?: number;
+  virtualRecoveryTimeStr?: string;
+  virtualRecoveryTimeSeconds?: number;
+  isTimeout?: boolean;
+  incidentId?: string;
 }
 
 export interface AutonomousAction {
@@ -300,7 +318,7 @@ export interface Incident {
   normalized_fault_category: string;
   normalized_subsystem: string;
   severity: string;
-  status: 'open' | 'detected' | 'diagnosing' | 'recovering' | 'resolved' | 'failed' | 'investigating' | 'diagnosed' | 'unresolved';
+  status: 'open' | 'detected' | 'diagnosing' | 'recovering' | 'resolved' | 'failed' | 'investigating' | 'diagnosed' | 'unresolved' | 'AI TIMEOUT' | 'timeout';
   description: string;
   detection_time: number;
   diagnosis_time?: number;
@@ -324,6 +342,11 @@ export interface Incident {
   recovery_start_sim_s?: number;
   recovery_end_sim_s?: number;
   total_resolution_sim_s?: number;
+  // ── 6-Second Optimization Fields ──
+  ai_processing_time_s?: number;      // Real wall-clock AI time (target ~5.0s, max 6.0s)
+  virtual_recovery_time_s?: number;  // Virtual mission physical recovery time (e.g. 9300s = 2h 35m)
+  virtual_recovery_time_str?: string;// Formatted virtual recovery string
+  is_timeout?: boolean;              // True if terminated by 6.0s hard safety limit
 }
 
 export interface DailySummary {

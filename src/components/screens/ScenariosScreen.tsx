@@ -81,6 +81,9 @@ export function ScenariosScreen() {
   const [triggered, setTriggered] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
+  const ai = useMissionStore((s) => s.aiAnalysis);
+  const incidents = useMissionStore((s) => s.incidents);
+
   const handleTrigger = async (threat: typeof THREATS[0]) => {
     if (activeThreats.length > 0) return; // Only one threat at a time
     setTriggered(threat.id);
@@ -142,7 +145,7 @@ export function ScenariosScreen() {
         {/* Header */}
         <div style={{
           padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10,
         }}>
           <div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,45,85,0.7)', letterSpacing: '0.2em', marginBottom: 4 }}>
@@ -155,11 +158,24 @@ export function ScenariosScreen() {
           {activeThreats.length > 0 && (
             <div style={{
               padding: '8px 16px',
-              background: 'rgba(255,45,85,0.15)', border: '1px solid rgba(255,45,85,0.4)',
-              borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#ff2d55',
-              animation: 'threat-alert 1s ease-in-out infinite',
+              background: ai.isTimeout ? 'rgba(255,45,85,0.2)' : 'rgba(155,93,229,0.15)',
+              border: `1px solid ${ai.isTimeout ? '#ff2d55' : '#9b5de5'}`,
+              borderRadius: 6, display: 'flex', alignItems: 'center', gap: 14,
             }}>
-              ⚠ AI RESPONDING TO {activeThreats[0]?.name}
+              <div style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: ai.isTimeout ? '#ff2d55' : '#9b5de5',
+                animation: !ai.isTimeout ? 'ai-pulse 1s infinite' : 'none',
+              }} />
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: '#fff' }}>
+                STAGE: <strong style={{ color: ai.isTimeout ? '#ff2d55' : '#9b5de5' }}>{(ai.liveStage ?? 'ANALYSING').toUpperCase()}</strong>
+                {' · '}AI TIME: <strong style={{ color: '#00d4ff' }}>{(ai.realElapsedSeconds ?? 0).toFixed(1)}s</strong> / 6.0s
+                {ai.virtualRecoveryTimeStr && (
+                  <span style={{ marginLeft: 10, opacity: 0.8, color: '#00ff88' }}>
+                    (Virtual: {ai.virtualRecoveryTimeStr})
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>
