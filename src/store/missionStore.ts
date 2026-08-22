@@ -275,6 +275,7 @@ interface MissionStore extends MissionState {
   tickMission: (realDeltaMs: number) => void;
   updateStats: (partial: Partial<MissionStats>) => void;
   completeMission: () => void;
+  warpToCompletion: () => void;
   setDisposition: (d: DispositionType) => void;
   archiveMission: () => void;
   loadArchivedMission: (id: string) => void;
@@ -549,6 +550,36 @@ export const useMissionStore = create<MissionStore>()(
 
       completeMission: () => {
         set({ status: 'completed', screen: 'completion', objectiveProgress: 100 });
+      },
+
+      warpToCompletion: () => {
+        const s = get();
+        const finalDay = Math.max(s.missionDay, s.totalMissionDurationDays || 17);
+        const completedMilestones = s.milestones.map((m) => ({
+          ...m,
+          completed: true,
+          completedAt: m.completedAt || Date.now(),
+        }));
+        const farewellEvent: BlackBoxEvent = {
+          id: `ev-farewell-warp-${Date.now()}`,
+          timestamp: Date.now(),
+          missionDay: finalDay,
+          eventType: 'milestone',
+          severity: 'nominal',
+          description: `MISSION COMPLETE — All ${s.milestones.length} objectives finalized via high-warp execution at Day ${finalDay.toFixed(1)}. The astronaut team has completed all flight goals. Farewell sequence initiated.`,
+          source: 'Mission Control',
+          immutable: true,
+        };
+
+        set({
+          missionDay: finalDay,
+          objectiveProgress: 100,
+          status: 'completed',
+          screen: 'disposition',
+          isPaused: false,
+          milestones: completedMilestones,
+          blackBox: [...s.blackBox, farewellEvent],
+        });
       },
 
       setDisposition: (disposition) => set({ disposition }),

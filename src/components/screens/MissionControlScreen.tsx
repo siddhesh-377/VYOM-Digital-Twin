@@ -13,7 +13,8 @@ const WARP_SPEEDS = [
   { val: 100, label: '100×' },
   { val: 1000, label: '1K×' },
   { val: 6000, label: '6K×' },
-  { val: 18000, label: 'MAX' },   // 18K× = physics-stable ceiling (~4.8 s/day)
+  { val: 18000, label: '18K×' },
+  { val: 864000, label: '864K×' }, // 864K× = 10 days / 1 second
 ];
 
 function TelemetryMini({ label, value, unit, color = '#00d4ff', status }: {

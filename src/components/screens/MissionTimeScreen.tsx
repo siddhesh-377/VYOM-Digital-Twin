@@ -1,14 +1,15 @@
-import { useMissionStore } from "../../store/missionStore";
+﻿import { useMissionStore } from "../../store/missionStore";
 import { motion } from "framer-motion";
 import { backendWS } from "../../services/BackendWebSocketService";
 import { formatElapsed } from "./MissionControlScreen";
 
 const SPEED_OPTIONS = [
-  { value: 1,     label: "1x",    sub: "REAL TIME" },
-  { value: 100,   label: "100x",  sub: "~14 MIN/DAY" },
-  { value: 1000,  label: "1Kx",   sub: "~86 S/DAY" },
-  { value: 6000,  label: "6Kx",   sub: "~14 S/DAY" },
-  { value: 18000, label: "18Kx",  sub: "~4.8 S/DAY" },
+  { value: 1,      label: "1x",     sub: "REAL TIME" },
+  { value: 100,    label: "100x",   sub: "~14 MIN/DAY" },
+  { value: 1000,   label: "1Kx",    sub: "~86 S/DAY" },
+  { value: 6000,   label: "6Kx",    sub: "~14 S/DAY" },
+  { value: 18000,  label: "18Kx",   sub: "~4.8 S/DAY" },
+  { value: 864000, label: "864Kx",  sub: "⚡ 10 DAYS / 1 SEC" },
 ];
 
 function ProgressBar({ label, pct, color, leftLabel, rightLabel, height = 10 }: {
@@ -40,6 +41,7 @@ export function MissionTimeScreen() {
   const pauseMission      = useMissionStore((s) => s.pauseMission);
   const resumeMission     = useMissionStore((s) => s.resumeMission);
   const resetSimulation   = useMissionStore((s) => s.resetSimulation);
+  const warpToCompletion  = useMissionStore((s) => s.warpToCompletion);
   const totalDays         = useMissionStore((s) => s.totalMissionDurationDays);
   const objectiveProgress = useMissionStore((s) => s.objectiveProgress);
   const milestones        = useMissionStore((s) => s.milestones);
@@ -59,7 +61,10 @@ export function MissionTimeScreen() {
   const completedCount = milestones.filter((m) => m.completed).length;
   const isComplete = status === "completed";
   const nextM = milestones.find((m) => !m.completed);
-  const warpLabel = timeMultiplier >= 1000 ? `${timeMultiplier / 1000}Kx` : `${timeMultiplier}x`;
+  
+  const warpLabel = timeMultiplier >= 864000
+    ? "864Kx (10 DAYS/SEC)"
+    : timeMultiplier >= 1000 ? `${timeMultiplier / 1000}Kx` : `${timeMultiplier}x`;
 
   return (
     <div style={{ width: "100%", height: "100%", overflowY: "auto", background: "#020409", padding: "32px", paddingBottom: 80 }}>
@@ -87,26 +92,50 @@ export function MissionTimeScreen() {
             <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.2em", color: "rgba(0,212,255,0.7)" }}>TIME ACCELERATION WARP FACTOR</div>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: isPaused ? "#ff8c00" : "#00ff88" }}>{isPaused ? "PAUSED" : `ACTIVE: ${warpLabel}`}</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 8, marginBottom: 14 }}>
+          
+          {/* Speed Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 8, marginBottom: 16 }}>
             {SPEED_OPTIONS.map((opt) => {
               const active = !isPaused && timeMultiplier === opt.value;
               return (
                 <button key={opt.value} onClick={() => { handleWarpChange(opt.value); if (isPaused) resumeMission(); }}
-                  style={{ padding: "14px 8px", background: active ? "rgba(0,212,255,0.2)" : "rgba(0,0,0,0.3)", border: `1px solid ${active ? "#00d4ff" : "rgba(255,255,255,0.08)"}`, borderRadius: 8, color: active ? "#00d4ff" : "rgba(255,255,255,0.5)", fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, cursor: "pointer", transition: "all 0.2s", boxShadow: active ? "0 0 20px rgba(0,212,255,0.2)" : "none" }}>
+                  style={{
+                    padding: "14px 8px",
+                    background: active ? "rgba(0,212,255,0.2)" : "rgba(0,0,0,0.3)",
+                    border: `1px solid ${active ? "#00d4ff" : "rgba(255,255,255,0.08)"}`,
+                    borderRadius: 8,
+                    color: active ? "#00d4ff" : "rgba(255,255,255,0.5)",
+                    fontFamily: "var(--font-display)",
+                    fontSize: 15,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    boxShadow: active ? "0 0 20px rgba(0,212,255,0.2)" : "none"
+                  }}>
                   {opt.label}
                   <div style={{ fontFamily: "var(--font-mono)", fontSize: 7.5, marginTop: 3, color: active ? "#00ff88" : "rgba(255,255,255,0.25)" }}>{opt.sub}</div>
                 </button>
               );
             })}
           </div>
-          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+
+          {/* Action Row: Pause/Resume, Reset, and Warp to Completion */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
             {!isPaused
-              ? <button onClick={pauseMission} style={{ flex: 1, padding: "10px", borderRadius: 6, cursor: "pointer", background: "rgba(255,140,0,0.12)", border: "1px solid rgba(255,140,0,0.35)", color: "#ff8c00", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em" }}>PAUSE</button>
-              : <button onClick={resumeMission} style={{ flex: 1, padding: "10px", borderRadius: 6, cursor: "pointer", background: "rgba(0,255,136,0.12)", border: "1px solid rgba(0,255,136,0.35)", color: "#00ff88", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em" }}>RESUME</button>}
-            <button onClick={resetSimulation} style={{ flex: 1, padding: "10px", borderRadius: 6, cursor: "pointer", background: "rgba(255,45,85,0.08)", border: "1px solid rgba(255,45,85,0.25)", color: "#ff2d55", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em" }}>RESET</button>
+              ? <button onClick={pauseMission} style={{ flex: 1, minWidth: 100, padding: "12px", borderRadius: 6, cursor: "pointer", background: "rgba(255,140,0,0.12)", border: "1px solid rgba(255,140,0,0.35)", color: "#ff8c00", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em" }}>⏸ PAUSE</button>
+              : <button onClick={resumeMission} style={{ flex: 1, minWidth: 100, padding: "12px", borderRadius: 6, cursor: "pointer", background: "rgba(0,255,136,0.12)", border: "1px solid rgba(0,255,136,0.35)", color: "#00ff88", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em" }}>▶ RESUME</button>}
+            
+            <button onClick={resetSimulation} style={{ flex: 1, minWidth: 100, padding: "12px", borderRadius: 6, cursor: "pointer", background: "rgba(255,45,85,0.08)", border: "1px solid rgba(255,45,85,0.25)", color: "#ff2d55", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em" }}>
+              ↺ RESET
+            </button>
+
+            <button onClick={warpToCompletion} style={{ flex: 1.5, minWidth: 180, padding: "12px", borderRadius: 6, cursor: "pointer", background: "linear-gradient(90deg, rgba(0,212,255,0.2), rgba(0,255,136,0.2))", border: "1px solid #00ff88", color: "#00ff88", fontFamily: "var(--font-display)", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", boxShadow: "0 0 15px rgba(0,255,136,0.2)" }}>
+              ⏩ WARP TO MISSION COMPLETE
+            </button>
           </div>
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: 8, color: "rgba(255,255,255,0.2)", textAlign: "center" }}>
-            Time acceleration affects simulation time only. Telemetry, orbit, AI, events and Black Box remain synchronized.
+
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 8, color: "rgba(255,255,255,0.25)", textAlign: "center" }}>
+            Time acceleration affects simulation time only. Telemetry, orbit, AI, events, and Black Box records remain fully synchronized.
           </div>
         </motion.div>
 
