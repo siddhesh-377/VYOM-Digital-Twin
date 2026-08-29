@@ -43,3 +43,6 @@ vyom-backend/*.db
 vyom-backend/.pytest_cache/
 vyom-backend/venv/
 vyom-backend/.venv/
+
+# Raw unpacked assets
+dashboard earth/
