@@ -7,6 +7,7 @@ import { SatelliteModel, OrbitLine } from '../three/SatelliteScene';
 import { StarField } from '../three/SpaceScene';
 import { backendWS, createAndStartMission, checkBackendHealth } from '../../services/BackendWebSocketService';
 import { MissionRiskPanel } from '../three/MissionRiskPanel';
+import { InteractiveEarthBackground } from '../ui/InteractiveEarthBackground';
 
 const WARP_SPEEDS = [
   { val: 1, label: '1×' },
@@ -91,8 +92,8 @@ export function MissionControlScreen() {
     }
   };
   const setScreen = useMissionStore((s) => s.setScreen);
-
   const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'failed'>('disconnected');
+  const [centerViewMode, setCenterViewMode] = useState<'spacecraft' | 'earth'>('spacecraft');
 
   useEffect(() => {
     if (config?.id) {
@@ -384,27 +385,94 @@ export function MissionControlScreen() {
         </div>
       </div>
 
-      {/* CENTER — 3D Spacecraft View */}
-      <div style={{ position: 'relative', background: '#020409' }}>
-        <Canvas gl={{ antialias: true }} dpr={[1, 2]}>
-          <PerspectiveCamera makeDefault position={[0, 0.5, 4]} fov={40} />
-          <ambientLight intensity={0.25} />
-          <directionalLight position={[4, 3, 4]} intensity={1.2} color="#fff5e8" />
-          <directionalLight position={[-3, -1, -3]} intensity={0.3} color="#aaccff" />
-          <StarField />
-          <SatelliteModel scale={1.5} />
-          <OrbitLine radius={3.2} inclination={51.6} />
-          <OrbitControls enableZoom={false} enablePan={false} />
-        </Canvas>
+      {/* CENTER — 3D Spacecraft View or Interactive 200-Frame Planetary Twin */}
+      <div style={{ position: 'relative', background: '#020409', overflow: 'hidden' }}>
+        {centerViewMode === 'earth' ? (
+          /* Interactive 200-Frame Earth Background Animation */
+          <InteractiveEarthBackground
+            totalFrames={200}
+            autoRotateSpeed={18}
+            autoRotate={true}
+            showHud={true}
+            showVignette={true}
+          />
+        ) : (
+          /* 3D Spacecraft Canvas */
+          <Canvas gl={{ antialias: true }} dpr={[1, 2]}>
+            <PerspectiveCamera makeDefault position={[0, 0.5, 4]} fov={40} />
+            <ambientLight intensity={0.25} />
+            <directionalLight position={[4, 3, 4]} intensity={1.2} color="#fff5e8" />
+            <directionalLight position={[-3, -1, -3]} intensity={0.3} color="#aaccff" />
+            <StarField />
+            <SatelliteModel scale={1.5} />
+            <OrbitLine radius={3.2} inclination={51.6} />
+            <OrbitControls enableZoom={false} enablePan={false} />
+          </Canvas>
+        )}
+
+        {/* View Switcher Overlay (Spacecraft 3D vs. Planetary Twin) */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 14,
+            right: 16,
+            zIndex: 15,
+            display: 'flex',
+            gap: 6,
+            background: 'rgba(5, 12, 25, 0.85)',
+            border: '1px solid rgba(0, 212, 255, 0.25)',
+            borderRadius: 6,
+            padding: '3px',
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          <button
+            onClick={() => setCenterViewMode('spacecraft')}
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 8.5,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              padding: '3px 8px',
+              background: centerViewMode === 'spacecraft' ? 'rgba(0, 212, 255, 0.25)' : 'transparent',
+              border: `1px solid ${centerViewMode === 'spacecraft' ? '#00d4ff' : 'transparent'}`,
+              borderRadius: 4,
+              color: centerViewMode === 'spacecraft' ? '#00d4ff' : 'rgba(255, 255, 255, 0.5)',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            🛰️ SATELLITE 3D
+          </button>
+          <button
+            onClick={() => setCenterViewMode('earth')}
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 8.5,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              padding: '3px 8px',
+              background: centerViewMode === 'earth' ? 'rgba(0, 212, 255, 0.25)' : 'transparent',
+              border: `1px solid ${centerViewMode === 'earth' ? '#00d4ff' : 'transparent'}`,
+              borderRadius: 4,
+              color: centerViewMode === 'earth' ? '#00d4ff' : 'rgba(255, 255, 255, 0.5)',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            🌍 PLANETARY TWIN (200 HD)
+          </button>
+        </div>
 
         {/* Overlay labels */}
-        <div style={{ position: 'absolute', top: 16, left: 16, fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.6)', letterSpacing: '0.12em' }}>
+        <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 12, fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.75)', letterSpacing: '0.12em', textShadow: '0 0 10px rgba(0,0,0,0.8)' }}>
           DIGITAL TWIN · {config?.name ?? 'VYOM-01'} · {config?.destination?.toUpperCase().replace('-', ' ') ?? 'EARTH ORBIT'}
         </div>
 
         {activeThreats.length > 0 && (
           <div style={{
             position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+            zIndex: 14,
             fontFamily: 'var(--font-display)', fontSize: 13, color: '#ff2d55',
             letterSpacing: '0.2em', animation: 'data-flash 0.8s ease-in-out infinite',
             pointerEvents: 'none',
@@ -415,9 +483,9 @@ export function MissionControlScreen() {
 
         {/* Signal & Cislunar readout */}
         {telemetry && (
-          <div style={{ position: 'absolute', bottom: 20, right: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 12, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(5,12,25,0.7)', padding: '4px 10px', borderRadius: 4, backdropFilter: 'blur(4px)' }}>
             <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#00d4ff', animation: 'pulse-dot 2s ease-in-out infinite' }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.7)' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.85)' }}>
               SIGNAL: {telemetry.comm.signalDbm.toFixed(0)} dBm · {telemetry.orbit.phaseDesc ?? 'Nominal'}
             </span>
           </div>

@@ -5,11 +5,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import * as THREE from 'three';
 import { Earth, StarField, OrbitingSatellite, Nebula } from '../three/SpaceScene';
 import { useMissionStore } from '../../store/missionStore';
+import { InteractiveEarthBackground } from '../ui/InteractiveEarthBackground';
 
 export function WelcomeScreen() {
   const setScreen = useMissionStore((s) => s.setScreen);
   const startMission = useMissionStore((s) => s.startMission);
   const [phase, setPhase] = useState<'intro' | 'tagline' | 'cta' | 'launching'>('intro');
+  const [backgroundMode, setBackgroundMode] = useState<'frames' | '3d'>('frames');
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
 
   useEffect(() => {
@@ -30,21 +32,86 @@ export function WelcomeScreen() {
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative', background: '#020409' }}>
-      {/* 3D Canvas */}
-      <Canvas
-        style={{ position: 'absolute', inset: 0 }}
-        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
-        dpr={[1, 2]}
+      {/* Interactive 200-Frame Earth Background Animation */}
+      {backgroundMode === 'frames' ? (
+        <InteractiveEarthBackground
+          totalFrames={200}
+          autoRotateSpeed={18}
+          autoRotate={true}
+          showHud={true}
+          showVignette={true}
+        />
+      ) : (
+        /* 3D Procedural Fallback Canvas */
+        <Canvas
+          style={{ position: 'absolute', inset: 0 }}
+          gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+          dpr={[1, 2]}
+        >
+          <PerspectiveCamera ref={cameraRef} makeDefault position={[0, 0, 6]} fov={50} />
+          <ambientLight intensity={0.1} />
+          <directionalLight position={[5, 3, 5]} intensity={1.2} color="#fff5e8" />
+          <StarField />
+          <Nebula />
+          <Earth radius={2} />
+          <OrbitingSatellite earthRadius={2} altitudeKm={650} />
+          <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.3} />
+        </Canvas>
+      )}
+
+      {/* Background Visual Switcher Toggle */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 24,
+          right: 28,
+          zIndex: 20,
+          display: 'flex',
+          gap: 6,
+          background: 'rgba(5, 12, 25, 0.85)',
+          border: '1px solid rgba(0, 212, 255, 0.25)',
+          borderRadius: 6,
+          padding: '3px',
+          backdropFilter: 'blur(8px)',
+        }}
       >
-        <PerspectiveCamera ref={cameraRef} makeDefault position={[0, 0, 6]} fov={50} />
-        <ambientLight intensity={0.1} />
-        <directionalLight position={[5, 3, 5]} intensity={1.2} color="#fff5e8" />
-        <StarField />
-        <Nebula />
-        <Earth radius={2} />
-        <OrbitingSatellite earthRadius={2} altitudeKm={650} />
-        <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.3} />
-      </Canvas>
+        <button
+          onClick={() => setBackgroundMode('frames')}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 8.5,
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            padding: '4px 10px',
+            background: backgroundMode === 'frames' ? 'rgba(0, 212, 255, 0.25)' : 'transparent',
+            border: `1px solid ${backgroundMode === 'frames' ? '#00d4ff' : 'transparent'}`,
+            borderRadius: 4,
+            color: backgroundMode === 'frames' ? '#00d4ff' : 'rgba(255, 255, 255, 0.5)',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+          }}
+        >
+          🌍 200-FRAME EARTH HD
+        </button>
+        <button
+          onClick={() => setBackgroundMode('3d')}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 8.5,
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            padding: '4px 10px',
+            background: backgroundMode === '3d' ? 'rgba(0, 212, 255, 0.25)' : 'transparent',
+            border: `1px solid ${backgroundMode === '3d' ? '#00d4ff' : 'transparent'}`,
+            borderRadius: 4,
+            color: backgroundMode === '3d' ? '#00d4ff' : 'rgba(255, 255, 255, 0.5)',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+          }}
+        >
+          🌌 3D PROCEDURAL
+        </button>
+      </div>
 
       {/* Scan line overlay */}
       <div className="scan-overlay" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
