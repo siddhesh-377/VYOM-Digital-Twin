@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
@@ -58,7 +58,6 @@ function TelemetryMini({
   unit?: string;
   status?: 'nominal' | 'warning' | 'critical';
 }) {
-  const color = status === 'critical' ? '#ff2d55' : status === 'warning' ? '#ff8c00' : '#fff';
   const valColor = status === 'critical' ? '#ff2d55' : status === 'warning' ? '#ff8c00' : '#00d4ff';
 
   return (
@@ -106,6 +105,7 @@ export function MissionControlScreen() {
   const setScreen = useMissionStore((s) => s.setScreen);
 
   const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'failed'>('disconnected');
+  const [selectedSubsystem, setSelectedSubsystem] = useState<string | null>(null);
 
   useEffect(() => {
     if (config?.id) {
@@ -137,6 +137,95 @@ export function MissionControlScreen() {
   const altKm = (telemetry?.orbit?.altitudeKm ?? 650.0).toFixed(1);
   const velKms = (telemetry?.orbit?.velocityKms ?? 7.62).toFixed(2);
   const signalDbm = (telemetry?.comm?.signalDbm ?? -72).toFixed(0);
+
+  // Subsystem detailed parameters generator
+  const subsystemDetails = useMemo(() => {
+    if (!selectedSubsystem) return null;
+    const name = selectedSubsystem.toLowerCase();
+    if (name.includes('power') || name.includes('eps') || name.includes('solar') || name.includes('rtg')) {
+      return {
+        title: 'ELECTRICAL POWER SYSTEM (EPS)',
+        health: telemetry ? Math.round(telemetry.power.batteryPercent) : 98,
+        status: telemetry && telemetry.power.batteryPercent < 30 ? 'CRITICAL' : 'NOMINAL',
+        metrics: [
+          { k: 'Bus Voltage', v: `${telemetry?.power.voltageV.toFixed(1) ?? '28.0'} V` },
+          { k: 'Solar Generation', v: `${telemetry?.power.solarGenerationW.toFixed(0) ?? '850'} W` },
+          { k: 'Load Demand', v: `${telemetry?.power.consumptionW.toFixed(0) ?? '410'} W` },
+          { k: 'Battery State', v: `${telemetry?.power.batteryPercent.toFixed(1) ?? '95.4'} %` },
+        ],
+        alerts: activeThreats.filter(t => t.id.includes('power') || t.id.includes('battery')),
+      };
+    }
+    if (name.includes('thermal') || name.includes('tcs') || name.includes('heat') || name.includes('sunshield') || name.includes('radiator')) {
+      return {
+        title: 'THERMAL CONTROL SYSTEM (TCS)',
+        health: telemetry ? Math.max(0, Math.round(100 - (telemetry.thermal.cpuTempC - 45) * 1.5)) : 96,
+        status: telemetry && telemetry.thermal.cpuTempC > 70 ? 'WARNING' : 'NOMINAL',
+        metrics: [
+          { k: 'Core CPU Temp', v: `${telemetry?.thermal.cpuTempC.toFixed(1) ?? '42.5'} °C` },
+          { k: 'Battery Pack Temp', v: `${telemetry?.thermal.batteryTempC.toFixed(1) ?? '21.0'} °C` },
+          { k: 'Payload Temp', v: `${telemetry?.thermal.payloadTempC.toFixed(1) ?? '15.4'} °C` },
+          { k: 'Skin Radiator Temp', v: `${telemetry?.thermal.externalTempC.toFixed(0) ?? '-45'} °C` },
+        ],
+        alerts: activeThreats.filter(t => t.id.includes('thermal') || t.id.includes('solar')),
+      };
+    }
+    if (name.includes('comm') || name.includes('antenna') || name.includes('dish') || name.includes('rf')) {
+      return {
+        title: 'COMMUNICATIONS & TELEMETRY (RF/HGA)',
+        health: telemetry && telemetry.comm.signalDbm < -95 ? 42 : 99,
+        status: telemetry && telemetry.comm.signalDbm < -90 ? 'WARNING' : 'NOMINAL',
+        metrics: [
+          { k: 'Carrier Signal', v: `${telemetry?.comm.signalDbm.toFixed(0) ?? '-72'} dBm` },
+          { k: 'Downlink Rate', v: `${telemetry?.comm.dataRateMbps.toFixed(1) ?? '150.0'} Mbps` },
+          { k: 'Packet Error Rate', v: '0.002 %' },
+          { k: 'Antenna Pointing', v: 'Locked (DSN)' },
+        ],
+        alerts: activeThreats.filter(t => t.id.includes('comm') || t.id.includes('signal')),
+      };
+    }
+    if (name.includes('propulsion') || name.includes('oms') || name.includes('engine') || name.includes('thruster') || name.includes('rcs')) {
+      return {
+        title: 'PROPULSION & ATTITUDE ACTUATION (OMS/RCS)',
+        health: 98,
+        status: 'NOMINAL',
+        metrics: [
+          { k: 'Delta-V Remaining', v: '480 m/s' },
+          { k: 'Hydrazine Tank Pressure', v: '18.4 Bar' },
+          { k: 'Thruster Chamber Temp', v: '290 °C' },
+          { k: 'RCS Duty Cycle', v: 'Nominal Pulse' },
+        ],
+        alerts: activeThreats.filter(t => t.id.includes('propulsion') || t.id.includes('debris') || t.id.includes('asteroid')),
+      };
+    }
+    if (name.includes('life support') || name.includes('eclss') || name.includes('crew')) {
+      return {
+        title: 'ENVIRONMENTAL CONTROL & LIFE SUPPORT (ECLSS)',
+        health: 100,
+        status: 'NOMINAL',
+        metrics: [
+          { k: 'Cabin Pressure', v: '101.3 kPa' },
+          { k: 'O2 Partial Pressure', v: '21.2 kPa' },
+          { k: 'CO2 Scrubber Efficiency', v: '99.4 %' },
+          { k: 'Cabin Temp', v: '21.5 °C' },
+        ],
+        alerts: activeThreats.filter(t => t.id.includes('eclss')),
+      };
+    }
+    // Default payload / avionics
+    return {
+      title: 'SCIENCE PAYLOAD & AVIONICS (OBC)',
+      health: 97,
+      status: 'NOMINAL',
+      metrics: [
+        { k: 'Instrument State', v: 'Active Scanning' },
+        { k: 'Signal-to-Noise', v: '48.2 dB' },
+        { k: 'Science Storage Buffer', v: '1.4 TB / 4.0 TB' },
+        { k: 'Real-time Telemetry Ingest', v: '10 Hz Active' },
+      ],
+      alerts: activeThreats,
+    };
+  }, [selectedSubsystem, telemetry, activeThreats]);
 
   return (
     <div style={{
@@ -439,15 +528,115 @@ export function MissionControlScreen() {
           <directionalLight position={[4, 3, 4]} intensity={1.4} color="#fff5e8" />
           <directionalLight position={[-3, -1, -3]} intensity={0.4} color="#aaccff" />
           <StarField />
-          {/* Mission-Specific Satellite 3D Model */}
-          <DynamicSpacecraftModel scale={1.4} interactive={true} />
+          {/* Mission-Specific Satellite 3D Model with Clickable Subsystems */}
+          <DynamicSpacecraftModel
+            scale={1.4}
+            interactive={true}
+            selectedSubsystem={selectedSubsystem}
+            onSelectSubsystem={(name) => setSelectedSubsystem(name)}
+          />
           <OrbitControls enableZoom={true} enablePan={true} maxDistance={10} minDistance={1.2} />
         </Canvas>
 
         {/* Top-left Overlay Identity */}
         <div style={{ position: 'absolute', top: 16, left: 16, fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.7)', letterSpacing: '0.12em', background: 'rgba(2,4,9,0.7)', padding: '4px 8px', borderRadius: 4, backdropFilter: 'blur(4px)' }}>
-          DIGITAL TWIN · {config?.name ?? 'VYOM-01'} · {config?.destination?.toUpperCase().replace('-', ' ') ?? 'EARTH ORBIT'}
+          DIGITAL TWIN · {config?.name ?? 'VYOM-01'} · CLICK SUBSYSTEM TO INSPECT
         </div>
+
+        {/* Subsystem Quick Selector Ribbon */}
+        <div style={{
+          position: 'absolute',
+          top: 16,
+          right: 16,
+          display: 'flex',
+          gap: 6,
+          background: 'rgba(2, 6, 14, 0.85)',
+          backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(0, 212, 255, 0.25)',
+          borderRadius: 6,
+          padding: '4px 8px',
+          zIndex: 5,
+        }}>
+          {['Power', 'Thermal', 'Communication', 'Propulsion', 'Payload'].map((sub) => (
+            <button
+              key={sub}
+              onClick={() => setSelectedSubsystem(selectedSubsystem === sub ? null : sub)}
+              style={{
+                background: selectedSubsystem?.toLowerCase().includes(sub.toLowerCase()) ? 'rgba(0,212,255,0.3)' : 'transparent',
+                border: selectedSubsystem?.toLowerCase().includes(sub.toLowerCase()) ? '1px solid #00d4ff' : '1px solid transparent',
+                borderRadius: 4,
+                padding: '3px 8px',
+                color: selectedSubsystem?.toLowerCase().includes(sub.toLowerCase()) ? '#00d4ff' : 'rgba(255,255,255,0.6)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 8,
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              {sub.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        {/* Subsystem Detailed Diagnostics Popover */}
+        {subsystemDetails && (
+          <div style={{
+            position: 'absolute',
+            top: 56,
+            right: 16,
+            width: 280,
+            background: 'rgba(5, 14, 30, 0.92)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid #00d4ff',
+            borderRadius: 8,
+            padding: '14px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.8), 0 0 20px rgba(0,212,255,0.2)',
+            zIndex: 15,
+            animation: 'fadeIn 0.2s ease-out',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: 10, fontWeight: 800, color: '#00d4ff', letterSpacing: '0.08em' }}>
+                {subsystemDetails.title}
+              </span>
+              <button
+                onClick={() => setSelectedSubsystem(null)}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: 14 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)' }}>INTEGRITY:</span>
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700,
+                color: subsystemDetails.health > 70 ? '#00ff88' : '#ff3b30',
+              }}>
+                {subsystemDetails.health}% · {subsystemDetails.status}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+              {subsystemDetails.metrics.map((m) => (
+                <div key={m.k} style={{ display: 'flex', justifyContent: 'space-between', background: 'rgba(0,0,0,0.3)', padding: '4px 8px', borderRadius: 4 }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: 'rgba(255,255,255,0.45)' }}>{m.k}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#fff', fontWeight: 600 }}>{m.v}</span>
+                </div>
+              ))}
+            </div>
+
+            {subsystemDetails.alerts.length > 0 ? (
+              <div style={{ padding: '6px', background: 'rgba(255,45,85,0.15)', border: '1px solid #ff2d55', borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: 8, color: '#ff2d55' }}>
+                ⚠ Active Alert: {subsystemDetails.alerts[0].name}
+              </div>
+            ) : (
+              <div style={{ padding: '4px 8px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.3)', borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: 8, color: '#00ff88', textAlign: 'center' }}>
+                ✓ Subsystem telemetry within nominal bounds
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Active Threat Warning Flash */}
         {activeThreats.length > 0 && (

@@ -103,7 +103,7 @@ function CislunarTrajectory() {
 
       {/* Spacecraft traveling on curve */}
       <group ref={satRef}>
-        <SatelliteModel scale={0.15} />
+        <DynamicSpacecraftModel scale={0.25} />
       </group>
     </group>
   );

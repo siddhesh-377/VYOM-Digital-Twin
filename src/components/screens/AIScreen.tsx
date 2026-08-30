@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
+import { DynamicSpacecraftModel } from '../three/DynamicSpacecraftModel';
+import { StarField } from '../three/SpaceScene';
 import { threatEngine } from '../../engines/ThreatEngine';
 import { backendWS, injectFaultViaBackend, submitManualActionViaBackend, fetchIncidentProcedures } from '../../services/BackendWebSocketService';
 import { cancelAIPipeline } from '../../engines/SimulationEngine';
@@ -119,6 +123,20 @@ export function AIScreen() {
       setIsQuerying(false);
     }, 150);
   };
+
+  // Subsystem focus derived from active anomaly or query
+  const focusedSubsystem = useMemo(() => {
+    const desc = (ai.anomalyDescription || '').toLowerCase();
+    const q = (aiQuery || '').toLowerCase();
+    const resp = (aiResponse || '').toLowerCase();
+    if (desc.includes('thermal') || q.includes('thermal') || resp.includes('thermal') || desc.includes('temp')) return 'thermal';
+    if (desc.includes('power') || desc.includes('battery') || desc.includes('solar') || q.includes('power') || resp.includes('power')) return 'power';
+    if (desc.includes('comm') || desc.includes('signal') || desc.includes('antenna') || q.includes('comm') || resp.includes('comm')) return 'communication';
+    if (desc.includes('propulsion') || desc.includes('engine') || desc.includes('thruster') || q.includes('propulsion') || resp.includes('propulsion')) return 'propulsion';
+    if (desc.includes('attitude') || desc.includes('gyro') || q.includes('attitude') || resp.includes('attitude')) return 'adcs';
+    if (desc.includes('life support') || desc.includes('eclss') || desc.includes('crew')) return 'eclss';
+    return null;
+  }, [ai.anomalyDescription, aiQuery, aiResponse]);
 
   useEffect(() => {
     if (controlMode !== 'manual' || !config?.id) return;
@@ -647,6 +665,47 @@ export function AIScreen() {
 
           {/* ── Right: Intel Panel ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+            {/* 3D Spacecraft Digital Twin Focus Card */}
+            <div style={{
+              height: 200,
+              position: 'relative',
+              background: '#020409',
+              border: '1px solid rgba(155,93,229,0.3)',
+              borderRadius: 10,
+              overflow: 'hidden',
+            }}>
+              <Canvas gl={{ antialias: true }} dpr={[1, 1.5]}>
+                <PerspectiveCamera makeDefault position={[0, 0.4, 3.2]} fov={42} />
+                <ambientLight intensity={0.25} />
+                <directionalLight position={[3, 3, 3]} intensity={1.2} color="#fff" />
+                <directionalLight position={[-3, -2, -3]} intensity={0.4} color="#9b5de5" />
+                <StarField />
+                <DynamicSpacecraftModel
+                  modelType={config?.type ? (config.type === 'human' ? 'crewed_capsule' : config.type === 'planetary' ? 'planetary_probe' : config.type === 'astrophysics' ? 'space_telescope' : 'earth_observer') : 'earth_observer'}
+                  scale={1.25}
+                  interactive={true}
+                  selectedSubsystem={focusedSubsystem}
+                  activeThreatOverride={ai.anomalyDetected ? ai.anomalyDescription : null}
+                />
+                <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.8} />
+              </Canvas>
+              <div style={{
+                position: 'absolute',
+                top: 10,
+                left: 12,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 8.5,
+                color: '#9b5de5',
+                letterSpacing: '0.12em',
+                fontWeight: 700,
+                background: 'rgba(2, 6, 14, 0.75)',
+                padding: '3px 8px',
+                borderRadius: 4,
+              }}>
+                SPACECRAFT TWIN FOCUS: {focusedSubsystem ? focusedSubsystem.toUpperCase() : 'NOMINAL SCAN'}
+              </div>
+            </div>
 
             {/* Control Mode */}
             <div style={{ padding: '16px', background: 'rgba(5,12,25,0.92)', border: '1px solid rgba(155,93,229,0.2)', borderRadius: 10 }}>
