@@ -7,6 +7,7 @@ import { useMissionStore } from '../../store/missionStore';
 import { CelestialTextures } from '../three/CelestialTextures';
 import { Earth } from '../three/SpaceScene';
 import { SatelliteModel, OrbitLine } from '../three/SatelliteScene';
+import { DynamicSpacecraftModel } from '../three/DynamicSpacecraftModel';
 import { backendWS, BACKEND_API_URL } from '../../services/BackendWebSocketService';
 
 // ==========================================
@@ -762,7 +763,7 @@ function UniverseSatellite({
       </group>
       
       <group ref={satGroupRef} onClick={(e) => { e.stopPropagation(); onSelect(); }}>
-        <SatelliteModel scale={0.35} interactive={isTarget} />
+        <DynamicSpacecraftModel scale={0.4} interactive={isTarget} />
         {/* Target Marker */}
         {isTarget && (
           <mesh>
