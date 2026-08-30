@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
-import { SatelliteModel } from '../three/SatelliteScene';
+import { DynamicSpacecraftModel } from '../three/DynamicSpacecraftModel';
 import { StarField } from '../three/SpaceScene';
 import { threatEngine } from '../../engines/ThreatEngine';
 import { backendWS, injectFaultViaBackend } from '../../services/BackendWebSocketService';
@@ -77,6 +77,7 @@ const THREATS = [
 
 export function ScenariosScreen() {
   const activeThreats = useMissionStore((s) => s.activeThreats);
+  const satellite = useMissionStore((s) => s.satellite);
   const blackBox = useMissionStore((s) => s.blackBox);
   const [triggered, setTriggered] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -120,7 +121,7 @@ export function ScenariosScreen() {
             color={activeThreats.some((t) => t.type === 'solar-storm') ? '#ff8c00' : '#fff5e8'}
           />
           <StarField />
-          <SatelliteModel scale={1.5} />
+          <DynamicSpacecraftModel modelType={satellite?.type as any} scale={1.2} />
           <OrbitControls enablePan={false} enableZoom={false} autoRotate autoRotateSpeed={activeThreats.length > 0 ? 3 : 0.5} />
         </Canvas>
         {/* Active threat overlay */}

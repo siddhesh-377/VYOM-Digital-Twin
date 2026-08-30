@@ -1,13 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
-import { LineChart, Line, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from 'recharts';
 import { useMissionStore } from '../../store/missionStore';
-import { SatelliteModel, OrbitLine } from '../three/SatelliteScene';
+import { DynamicSpacecraftModel } from '../three/DynamicSpacecraftModel';
+import { SpacePathRenderer } from '../three/SpacePathRenderer';
 import { StarField } from '../three/SpaceScene';
-import { backendWS, createAndStartMission, checkBackendHealth } from '../../services/BackendWebSocketService';
-import { MissionRiskPanel } from '../three/MissionRiskPanel';
+import { backendWS } from '../../services/BackendWebSocketService';
+import { telemetryProvider, TelemetryConnectionState } from '../../services/TelemetryProvider';
+import { MISSION_PROFILES } from '../../types/missionProfiles';
+import { anomalyPipeline } from '../../engines/AnomalyPipelineEngine';
+import { TrajectoryPredictionEngine } from '../../engines/TrajectoryPredictionEngine';
 import { InteractiveEarthBackground } from '../ui/InteractiveEarthBackground';
+import { AppScreen } from '../../types/mission';
 
 const WARP_SPEEDS = [
   { val: 1, label: '1×' },
@@ -15,53 +20,9 @@ const WARP_SPEEDS = [
   { val: 1000, label: '1K×' },
   { val: 6000, label: '6K×' },
   { val: 18000, label: '18K×' },
-  { val: 864000, label: '864K×' }, // 864K× = 10 days / 1 second
+  { val: 864000, label: '864K×' },
 ];
 
-function TelemetryMini({ label, value, unit, color = '#00d4ff', status }: {
-  label: string; value: string; unit?: string; color?: string; status?: string;
-}) {
-  const statusColor = status === 'critical' ? 'var(--critical)' : status === 'warning' ? 'var(--warning)' : color;
-  return (
-    <div style={{
-      padding: '8px 12px',
-      background: 'rgba(0,0,0,0.3)',
-      border: `1px solid ${status === 'critical' ? 'rgba(255,45,85,0.4)' : status === 'warning' ? 'rgba(255,140,0,0.25)' : 'rgba(255,255,255,0.06)'}`,
-      borderRadius: 6, transition: 'all 0.3s',
-      animation: status === 'critical' ? 'threat-alert 1s ease-in-out infinite' : 'none',
-    }}>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.12em', color: 'rgba(255,255,255,0.35)', marginBottom: 3 }}>
-        {label}
-      </div>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 700, color: statusColor, lineHeight: 1 }}>
-        {value}<span style={{ fontSize: 9, fontWeight: 400, marginLeft: 2, opacity: 0.7 }}>{unit}</span>
-      </div>
-    </div>
-  );
-}
-
-function HealthRing({ value }: { value: number }) {
-  const r = 36;
-  const circ = 2 * Math.PI * r;
-  const filled = (value / 100) * circ;
-  const color = value > 70 ? '#00ff88' : value > 40 ? '#ff8c00' : '#ff2d55';
-  return (
-    <svg width={84} height={84} style={{ transform: 'rotate(-90deg)' }}>
-      <circle cx={42} cy={42} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={6} />
-      <circle cx={42} cy={42} r={r} fill="none" stroke={color}
-        strokeWidth={6} strokeDasharray={`${filled} ${circ - filled}`}
-        strokeLinecap="round"
-        style={{ transition: 'stroke-dasharray 0.8s ease, stroke 0.3s ease', filter: `drop-shadow(0 0 4px ${color})` }}
-      />
-      <text x={42} y={42} fill={color} textAnchor="middle" dominantBaseline="middle"
-        style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, transform: 'rotate(90deg)', transformOrigin: '42px 42px' }}>
-        {Math.round(value)}%
-      </text>
-    </svg>
-  );
-}
-
-/** Format the fractional part of a mission day as an elapsed clock (Dd HH:MM:SS). */
 export function formatElapsed(missionDay: number): string {
   const totalSeconds = Math.max(0, Math.floor(missionDay * 86400));
   const d = Math.floor(totalSeconds / 86400);
@@ -74,503 +35,622 @@ export function formatElapsed(missionDay: number): string {
 export function MissionControlScreen() {
   const telemetry = useMissionStore((s) => s.telemetry);
   const config = useMissionStore((s) => s.config);
-  const crew = useMissionStore((s) => s.crew);
+  const satellite = useMissionStore((s) => s.satellite);
   const missionDay = useMissionStore((s) => s.missionDay);
   const status = useMissionStore((s) => s.status);
   const aiAnalysis = useMissionStore((s) => s.aiAnalysis);
+  const incidents = useMissionStore((s) => s.incidents);
   const activeThreats = useMissionStore((s) => s.activeThreats);
   const objectiveProgress = useMissionStore((s) => s.objectiveProgress);
   const telemetryHistory = useMissionStore((s) => s.telemetryHistory);
   const timeMultiplier = useMissionStore((s) => s.timeMultiplier);
+  const isPaused = useMissionStore((s) => s.isPaused);
+  const selectedSubsystem = useMissionStore((s) => s.selectedSubsystem);
+  const setSelectedSubsystem = useMissionStore((s) => s.setSelectedSubsystem);
+  const setMissionProfile = useMissionStore((s) => s.setMissionProfile);
   const setTimeMultiplier = useMissionStore((s) => s.setTimeMultiplier);
+  const setScreen = useMissionStore((s) => s.setScreen);
+
+  const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'failed'>('disconnected');
+  const [telemetryState, setTelemetryState] = useState<TelemetryConnectionState>('SIMULATED');
+  const [centerViewMode, setCenterViewMode] = useState<'spacecraft' | 'earth'>('spacecraft');
+  const [showObservedOrbit, setShowObservedOrbit] = useState(true);
+  const [showPredictedOrbit, setShowPredictedOrbit] = useState(true);
+  const [showGroundTrack, setShowGroundTrack] = useState(true);
+  const [selectedHorizon, setSelectedHorizon] = useState<'10m' | '30m' | '1orbit' | '6h' | '24h'>('1orbit');
+  const [utcTimeStr, setUtcTimeStr] = useState<string>(new Date().toISOString().slice(11, 19) + ' UTC');
+
+  // Master UTC Mission Clock updater
+  useEffect(() => {
+    const clockTimer = setInterval(() => {
+      setUtcTimeStr(new Date().toISOString().slice(11, 19) + ' UTC');
+    }, 1000);
+    return () => clearInterval(clockTimer);
+  }, []);
+
+  // Connect WebSocket & Telemetry Provider
+  useEffect(() => {
+    if (config?.id) {
+      backendWS.connect(config.id);
+      telemetryProvider.init(config.id);
+    }
+    const unsubWs = backendWS.onStatusChange(setWsStatus);
+    const unsubState = telemetryProvider.onStateChange(setTelemetryState);
+    return () => {
+      unsubWs();
+      unsubState();
+    };
+  }, [config?.id]);
+
+  // Run anomaly pipeline on incoming telemetry
+  useEffect(() => {
+    if (telemetry) {
+      anomalyPipeline.evaluate(telemetry);
+    }
+  }, [telemetry]);
+
+  const activeMissionKey = useMemo(() => {
+    if (config?.type === 'human') return 'human';
+    if (config?.type === 'planetary') return 'planetary';
+    if (config?.type === 'astrophysics') return 'astrophysics';
+    return 'orbital';
+  }, [config?.type]);
+
+  const predictionResult = useMemo(() => {
+    if (!telemetry?.orbit) return null;
+    return TrajectoryPredictionEngine.predictHorizon(telemetry.orbit, selectedHorizon);
+  }, [telemetry?.orbit, selectedHorizon]);
+
+  const powerHistoryData = useMemo(() => {
+    return telemetryHistory.slice(-50).map((t, idx) => ({
+      idx,
+      battery: t.power?.batteryPercent ?? 100,
+      solar: (t.power?.solarGenerationW ?? 200) / 30, // scaled
+    }));
+  }, [telemetryHistory]);
+
+  const thermalHistoryData = useMemo(() => {
+    return telemetryHistory.slice(-50).map((t, idx) => ({
+      idx,
+      cpu: t.thermal?.cpuTempC ?? 40,
+      battery: t.thermal?.batteryTempC ?? 20,
+    }));
+  }, [telemetryHistory]);
+
+  const handleMissionSelect = (key: 'human' | 'orbital' | 'planetary' | 'astrophysics') => {
+    setMissionProfile(key);
+    setSelectedSubsystem(null);
+  };
 
   const handleWarpChange = (val: number) => {
     setTimeMultiplier(val);
-    // Sync to backend if connected so the authoritative simulation runs at the right speed
     if (backendWS.isConnected) {
       backendWS.setTimeMultiplier(val);
     }
   };
-  const setScreen = useMissionStore((s) => s.setScreen);
-  const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'failed'>('disconnected');
-  const [centerViewMode, setCenterViewMode] = useState<'spacecraft' | 'earth'>('spacecraft');
 
-  useEffect(() => {
-    if (config?.id) {
-      backendWS.connect(config.id);
-    }
-    const unsub = backendWS.onStatusChange(setWsStatus);
-    return () => unsub();
-  }, [config?.id]);
-
-  const powerHistory = telemetryHistory.slice(-60).map((t, i) => ({
-    i, v: t.power.batteryPercent,
-  }));
-
-  const health = telemetry?.overallHealth ?? 100;
-  const healthStatus = telemetry?.healthStatus ?? 'nominal';
-  const statusColor = healthStatus === 'nominal' ? '#00ff88' : healthStatus === 'warning' ? '#ff8c00' : '#ff2d55';
-  const isHumanMission = config?.type === 'human';
+  const overallHealth = telemetry?.overallHealth ?? 100;
+  const healthColor = overallHealth > 75 ? '#00ff88' : overallHealth > 45 ? '#ff9f0a' : '#ff3b30';
 
   return (
     <div style={{
       width: '100%', height: '100%', display: 'grid',
-      gridTemplateColumns: '310px 1fr 320px',
-      gridTemplateRows: '56px 1fr',
-      background: '#020409', overflow: 'hidden',
-      paddingBottom: 56,
+      gridTemplateColumns: '320px 1fr 340px',
+      gridTemplateRows: '56px 1fr 140px',
+      background: '#02040a', overflow: 'hidden',
+      color: '#fff', fontFamily: 'var(--font-sans, system-ui, sans-serif)',
     }}>
-      {/* Top status bar */}
-      <div style={{
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* ── 1. TOP BAR: IDENTITY, STATUS & MASTER CLOCK ── */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      <header style={{
         gridColumn: '1 / -1',
-        background: 'rgba(2,4,9,0.98)',
-        borderBottom: '1px solid rgba(0,212,255,0.15)',
-        display: 'flex', alignItems: 'center',
-        padding: '0 20px', gap: 16,
+        background: 'rgba(5, 10, 20, 0.95)',
+        backdropFilter: 'blur(12px)',
+        borderBottom: '1px solid rgba(0, 229, 255, 0.18)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 20px', zIndex: 10,
       }}>
-        {/* Brand */}
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 900, color: '#00d4ff', letterSpacing: '0.15em', display: 'flex', alignItems: 'center', gap: 8 }}>
-          VYOM
+        {/* Brand & Connection State */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => setScreen('welcome')}>
+            <div style={{
+              width: 10, height: 10, borderRadius: '50%',
+              background: telemetryState === 'STALE' ? '#ff3b30' : '#00e5ff',
+              boxShadow: telemetryState === 'STALE' ? '0 0 10px #ff3b30' : '0 0 10px #00e5ff',
+              animation: telemetryState === 'STALE' ? 'pulse 1s infinite' : 'none',
+            }} />
+            <span style={{ fontFamily: 'var(--font-display, sans-serif)', fontSize: 18, fontWeight: 900, letterSpacing: '0.18em', color: '#00e5ff' }}>
+              VYOM
+            </span>
+          </div>
+
           <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: 7, padding: '2px 4px', borderRadius: 2, letterSpacing: 0,
-            background: wsStatus === 'connected' ? 'rgba(155,93,229,0.2)' : 'rgba(255,255,255,0.1)',
-            border: `1px solid ${wsStatus === 'connected' ? '#9b5de5' : 'rgba(255,255,255,0.2)'}`,
-            color: wsStatus === 'connected' ? '#9b5de5' : 'rgba(255,255,255,0.6)',
+            fontSize: 9, fontFamily: 'var(--font-mono, monospace)', padding: '2px 8px', borderRadius: 4,
+            background: telemetryState === 'LIVE' ? 'rgba(0,255,136,0.15)' : telemetryState === 'STALE' ? 'rgba(255,59,48,0.2)' : 'rgba(255,159,10,0.15)',
+            border: `1px solid ${telemetryState === 'LIVE' ? '#00ff88' : telemetryState === 'STALE' ? '#ff3b30' : '#ff9f0a'}`,
+            color: telemetryState === 'LIVE' ? '#00ff88' : telemetryState === 'STALE' ? '#ff3b30' : '#ff9f0a',
+            fontWeight: 700, letterSpacing: '0.08em',
           }}>
-            {wsStatus === 'connected' ? 'LIVE BACKEND' : 'LOCAL SIM'}
+            {telemetryState === 'LIVE' ? '🔴 LIVE TELEMETRY' : telemetryState === 'STALE' ? '⚠ TELEMETRY STALE' : '🟡 SIMULATION STREAM'}
+          </div>
+
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono, monospace)' }}>
+            {wsStatus === 'connected' ? '⚡ 10Hz WS CONNECTED' : '🔌 LOCAL BACKEND'}
           </div>
         </div>
-        <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)' }} />
 
-        {/* Mission identity */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.4)' }}>MISSION:</span>
-          <span style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700, color: '#fff', letterSpacing: '0.05em' }}>
-            {config?.name ?? 'VYOM-01'}
-          </span>
-          <span style={{
-            fontFamily: 'var(--font-mono)', fontSize: 8, padding: '2px 6px',
-            background: isHumanMission ? 'rgba(0,255,136,0.12)' : 'rgba(0,212,255,0.12)',
-            border: `1px solid ${isHumanMission ? '#00ff88' : '#00d4ff'}`,
-            borderRadius: 3, color: isHumanMission ? '#00ff88' : '#00d4ff', textTransform: 'uppercase',
-          }}>
-            {isHumanMission ? '👨‍🚀 HUMAN' : config?.type?.toUpperCase() ?? 'ORBITAL'}
-          </span>
-        </div>
-
-        {/* Destination Target */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '3px 8px', background: 'rgba(0,212,255,0.08)',
-          border: '1px solid rgba(0,212,255,0.2)', borderRadius: 4,
-        }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)' }}>TARGET:</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00d4ff', fontWeight: 600 }}>
-            {config?.destination?.toUpperCase().replace('-', ' ') ?? 'EARTH ORBIT'}
-          </span>
-        </div>
-
-        {/* Budget badge */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '3px 8px', background: 'rgba(0,255,136,0.08)',
-          border: '1px solid rgba(0,255,136,0.2)', borderRadius: 4,
-        }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)' }}>BUDGET:</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, color: '#00ff88' }}>
-            ₹{config?.budgetCrore ?? 250} Cr
-          </span>
-        </div>
-
-        {/* Status */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor, boxShadow: `0 0 8px ${statusColor}` }} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: statusColor }}>
-            {status.toUpperCase()}
-          </span>
-        </div>
-
-        {/* Mission Day + elapsed sim clock (visible at real-time speed) */}
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
-          DAY: <span style={{ color: '#00d4ff', fontWeight: 700 }}>{String(Math.floor(missionDay)).padStart(4, '0')}</span>
-          <span style={{ marginLeft: 6, fontSize: 8.5, color: timeMultiplier === 1 && missionDay < 0.02 ? '#ff8c00' : 'rgba(255,255,255,0.45)' }}>
-            · T+{formatElapsed(missionDay)}
-            {timeMultiplier === 1 && missionDay < 0.02 && ' (1× = 24h/day — use warp ↑)'}
-          </span>
-        </div>
-
-        {activeThreats.length > 0 && (
-          <button
-            onClick={() => setScreen('danger-decision')}
-            style={{
-              padding: '3px 10px', background: 'rgba(255,45,85,0.2)',
-              border: '1px solid #ff2d55', borderRadius: 4,
-              fontFamily: 'var(--font-mono)', fontSize: 9, color: '#ff2d55',
-              letterSpacing: '0.1em', animation: 'threat-alert 1s ease-in-out infinite',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-            }}
-            title="Open AI-Powered Danger Simulation & Decision Support"
-          >
-            <span>⚠️ {activeThreats.length} THREAT ACTIVE</span>
-            <span style={{ background: '#ff2d55', color: '#fff', padding: '1px 5px', borderRadius: 2, fontSize: 7.5, fontWeight: 900 }}>
-              AI DANGER SIM →
-            </span>
-          </button>
-        )}
-
-        {/* Ultra Warp Time Multipliers */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            onClick={() => setScreen('onboarding')}
-            style={{
-              padding: '5px 10px', background: 'rgba(0,212,255,0.1)',
-              border: '1px solid rgba(0,212,255,0.4)', borderRadius: 4,
-              color: '#00d4ff', fontFamily: 'var(--font-mono)', fontSize: 9,
-              cursor: 'pointer', transition: 'all 0.2s',
-            }}
-          >
-            + NEW MISSION
-          </button>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-            {WARP_SPEEDS.map((s) => (
-              <button key={s.val}
-                onClick={() => handleWarpChange(s.val)}
+        {/* Mission Type Switcher Buttons */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.4)', padding: '4px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)' }}>
+          {(['human', 'orbital', 'planetary', 'astrophysics'] as const).map((key) => {
+            const prof = MISSION_PROFILES[key];
+            const isActive = activeMissionKey === key;
+            return (
+              <button
+                key={key}
+                onClick={() => handleMissionSelect(key)}
                 style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 8,
-                  padding: '3px 6px',
-                  background: timeMultiplier === s.val ? 'rgba(0,212,255,0.25)' : 'transparent',
-                  border: `1px solid ${timeMultiplier === s.val ? '#00d4ff' : 'rgba(255,255,255,0.08)'}`,
-                  borderRadius: 3, color: timeMultiplier === s.val ? '#00d4ff' : 'rgba(255,255,255,0.4)',
-                  cursor: 'pointer',
+                  background: isActive ? 'rgba(0, 229, 255, 0.2)' : 'transparent',
+                  border: isActive ? '1px solid #00e5ff' : '1px solid transparent',
+                  color: isActive ? '#00e5ff' : 'rgba(255,255,255,0.6)',
+                  padding: '4px 10px', borderRadius: 5, fontSize: 10, fontWeight: 700,
+                  cursor: 'pointer', fontFamily: 'var(--font-mono, monospace)',
+                  transition: 'all 0.2s ease',
                 }}
-                title={s.val === 18000 ? 'Maximum physics-stable warp (~4.8 s per mission day)' : `${s.label} speed`}
               >
-                {s.label}
+                {prof.name.split(' ')[0]}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Master Clock & Mission Elapsed Time (MET) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 12, fontWeight: 700, color: '#00e5ff' }}>
+              {utcTimeStr}
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>
+              MET: T+{formatElapsed(missionDay)}
+            </div>
+          </div>
+
+          {/* Status Badge */}
+          <div style={{
+            padding: '4px 10px', borderRadius: 4, fontSize: 10, fontWeight: 800,
+            background: status === 'threatened' ? 'rgba(255,59,48,0.2)' : 'rgba(0,255,136,0.15)',
+            border: `1px solid ${status === 'threatened' ? '#ff3b30' : '#00ff88'}`,
+            color: status === 'threatened' ? '#ff3b30' : '#00ff88',
+            letterSpacing: '0.08em',
+          }}>
+            {status.toUpperCase()}
+          </div>
+        </div>
+      </header>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* ── 2. LEFT PANEL: MISSION NAVIGATION & CONTROLS ── */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      <aside style={{
+        background: 'rgba(4, 8, 16, 0.92)',
+        borderRight: '1px solid rgba(0, 229, 255, 0.12)',
+        padding: '16px', display: 'flex', flexDirection: 'column', gap: 14,
+        overflowY: 'auto', zIndex: 5,
+      }}>
+        {/* Active Mission Card */}
+        <div style={{
+          background: 'rgba(0, 229, 255, 0.04)',
+          border: '1px solid rgba(0, 229, 255, 0.25)',
+          borderRadius: 8, padding: '12px',
+        }}>
+          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono, monospace)', color: '#00e5ff', letterSpacing: '0.1em' }}>
+            ACTIVE MISSION PROFILE
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, marginTop: 4, color: '#fff' }}>
+            {config?.name || 'VYOM Spacecraft'}
+          </div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 4, lineHeight: 1.3 }}>
+            {config?.objective || 'Orbital digital twin mission'}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <div>
+              <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono, monospace)' }}>MASS</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#fff' }}>{satellite?.type === 'crewed_capsule' ? '5,300 kg' : '1,650 kg'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono, monospace)' }}>TARGET BODY</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#00e5ff' }}>{config?.destination?.replace('-', ' ').toUpperCase() || 'EARTH'}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Time Warp Controller */}
+        <div style={{
+          background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 8, padding: '10px 12px',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: 9, fontFamily: 'var(--font-mono, monospace)', color: 'rgba(255,255,255,0.5)' }}>TIME WARP ACCELERATION</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#00e5ff', fontFamily: 'var(--font-mono, monospace)' }}>{timeMultiplier}×</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4 }}>
+            {WARP_SPEEDS.map((w) => (
+              <button
+                key={w.val}
+                onClick={() => handleWarpChange(w.val)}
+                style={{
+                  background: timeMultiplier === w.val ? '#00e5ff' : 'rgba(255,255,255,0.06)',
+                  color: timeMultiplier === w.val ? '#02040a' : '#fff',
+                  border: 'none', borderRadius: 4, padding: '4px 0', fontSize: 9,
+                  fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-mono, monospace)',
+                }}
+              >
+                {w.label}
               </button>
             ))}
           </div>
         </div>
-      </div>
 
-      {/* LEFT PANEL */}
-      <div style={{
-        background: 'rgba(5,12,25,0.94)', borderRight: '1px solid rgba(0,212,255,0.08)',
-        padding: '14px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12,
+        {/* Navigation Modes */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono, monospace)', color: 'rgba(255,255,255,0.4)', paddingLeft: 4 }}>
+            MISSION NAVIGATION
+          </div>
+          {[
+            { id: 'digital-twin', label: '🛰️ Spacecraft Digital Twin' },
+            { id: 'orbit', label: '🌍 Orbit & Ground Track' },
+            { id: 'universe', label: '🌌 Deep Space Universe' },
+            { id: 'crew', label: '👨‍🚀 Crew Physiological HUD', hidden: config?.type !== 'human' },
+            { id: 'telemetry', label: '📊 12-Channel Telemetry' },
+            { id: 'danger-decision', label: '⚠️ Threat & Risk Simulator' },
+            { id: 'ai', label: '🤖 AI Autonomous Operator' },
+            { id: 'scenarios', label: '🔬 What-If Scenario Matrix' },
+            { id: 'reports', label: '📑 Mission Dossier & PDF' },
+          ].filter((n) => !n.hidden).map((nav) => (
+            <button
+              key={nav.id}
+              onClick={() => setScreen(nav.id as AppScreen)}
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.07)',
+                color: 'rgba(255,255,255,0.85)',
+                padding: '8px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(0, 229, 255, 0.12)';
+                e.currentTarget.style.borderColor = '#00e5ff';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)';
+              }}
+            >
+              {nav.label}
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* ── 3. CENTER VIEWPORT: 3D DIGITAL TWIN & ORBITAL CANVAS ── */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      <main style={{ position: 'relative', overflow: 'hidden', background: '#020409' }}>
+        {/* Interactive 3D WebGL Canvas */}
+        <Canvas gl={{ antialias: true, alpha: false }}>
+          <PerspectiveCamera makeDefault position={[0, 2.5, 6]} fov={45} />
+          <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} maxDistance={20} minDistance={1.5} />
+          <ambientLight intensity={0.4} />
+          <directionalLight position={[10, 10, 5]} intensity={1.8} color="#ffffff" />
+          <pointLight position={[-10, -10, -5]} intensity={0.3} color="#00e5ff" />
+          <StarField />
+
+          {/* Earth sphere background with atmospheric glow */}
+          {centerViewMode === 'spacecraft' && (
+            <mesh position={[0, -2.8, -1.5]}>
+              <sphereGeometry args={[2.0, 64, 64]} />
+              <meshStandardMaterial color="#1a457a" roughness={0.7} metalness={0.1} />
+            </mesh>
+          )}
+
+          {/* Dynamic Procedural Spacecraft 3D Model */}
+          <DynamicSpacecraftModel
+            modelType={satellite?.type as any}
+            scale={1.2}
+            selectedSubsystem={selectedSubsystem}
+            onSelectSubsystem={(sub) => setSelectedSubsystem(sub)}
+          />
+
+          {/* Multi-Horizon Space Path & Orbit Trajectory */}
+          <SpacePathRenderer
+            showObserved={showObservedOrbit}
+            showPredicted={showPredictedOrbit}
+            showGroundTrack={showGroundTrack}
+            orbitRadius={3.3}
+            inclinationDeg={telemetry?.orbit?.inclinationDeg ?? 51.6}
+          />
+        </Canvas>
+
+        {/* Viewport Control Bar */}
+        <div style={{
+          position: 'absolute', top: 12, left: 16, display: 'flex', gap: 6,
+          background: 'rgba(2, 6, 14, 0.85)', backdropFilter: 'blur(8px)',
+          padding: '6px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)',
+          zIndex: 4,
+        }}>
+          <button
+            onClick={() => setShowObservedOrbit(!showObservedOrbit)}
+            style={{
+              background: showObservedOrbit ? 'rgba(0, 229, 255, 0.25)' : 'transparent',
+              border: showObservedOrbit ? '1px solid #00e5ff' : '1px solid rgba(255,255,255,0.1)',
+              color: showObservedOrbit ? '#00e5ff' : 'rgba(255,255,255,0.6)',
+              padding: '4px 8px', borderRadius: 4, fontSize: 9, fontWeight: 700, cursor: 'pointer',
+            }}
+          >
+            OBSERVED ORBIT
+          </button>
+          <button
+            onClick={() => setShowPredictedOrbit(!showPredictedOrbit)}
+            style={{
+              background: showPredictedOrbit ? 'rgba(255, 159, 10, 0.25)' : 'transparent',
+              border: showPredictedOrbit ? '1px solid #ff9f0a' : '1px solid rgba(255,255,255,0.1)',
+              color: showPredictedOrbit ? '#ff9f0a' : 'rgba(255,255,255,0.6)',
+              padding: '4px 8px', borderRadius: 4, fontSize: 9, fontWeight: 700, cursor: 'pointer',
+            }}
+          >
+            PREDICTED PATH
+          </button>
+          <button
+            onClick={() => setShowGroundTrack(!showGroundTrack)}
+            style={{
+              background: showGroundTrack ? 'rgba(48, 209, 88, 0.25)' : 'transparent',
+              border: showGroundTrack ? '1px solid #30d158' : '1px solid rgba(255,255,255,0.1)',
+              color: showGroundTrack ? '#30d158' : 'rgba(255,255,255,0.6)',
+              padding: '4px 8px', borderRadius: 4, fontSize: 9, fontWeight: 700, cursor: 'pointer',
+            }}
+          >
+            GROUND TRACK
+          </button>
+        </div>
+
+        {/* Orbit Prediction Horizon Selector */}
+        <div style={{
+          position: 'absolute', top: 12, right: 16, display: 'flex', gap: 4,
+          background: 'rgba(2, 6, 14, 0.85)', backdropFilter: 'blur(8px)',
+          padding: '4px 8px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)',
+          zIndex: 4, alignItems: 'center',
+        }}>
+          <span style={{ fontSize: 8, fontFamily: 'var(--font-mono, monospace)', color: 'rgba(255,255,255,0.4)', marginRight: 4 }}>HORIZON:</span>
+          {(['10m', '30m', '1orbit', '6h', '24h'] as const).map((h) => (
+            <button
+              key={h}
+              onClick={() => setSelectedHorizon(h)}
+              style={{
+                background: selectedHorizon === h ? '#ff9f0a' : 'transparent',
+                color: selectedHorizon === h ? '#02040a' : 'rgba(255,255,255,0.7)',
+                border: 'none', borderRadius: 4, padding: '3px 6px', fontSize: 9,
+                fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-mono, monospace)',
+              }}
+            >
+              {h}
+            </button>
+          ))}
+        </div>
+
+        {/* Live HUD Readouts Overlay */}
+        <div style={{
+          position: 'absolute', bottom: 12, left: 16, display: 'flex', gap: 10,
+          background: 'rgba(2, 6, 14, 0.85)', backdropFilter: 'blur(8px)',
+          padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(0,229,255,0.15)',
+          zIndex: 4,
+        }}>
+          <div>
+            <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono, monospace)' }}>ALTITUDE</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#00e5ff', fontFamily: 'var(--font-mono, monospace)' }}>
+              {telemetry?.orbit?.altitudeKm?.toFixed(1) ?? '400.0'} km
+            </div>
+          </div>
+          <div style={{ width: 1, background: 'rgba(255,255,255,0.1)' }} />
+          <div>
+            <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono, monospace)' }}>VELOCITY</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: 'var(--font-mono, monospace)' }}>
+              {telemetry?.orbit?.velocityKms?.toFixed(2) ?? '7.66'} km/s
+            </div>
+          </div>
+          <div style={{ width: 1, background: 'rgba(255,255,255,0.1)' }} />
+          <div>
+            <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono, monospace)' }}>INCLINATION</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: 'var(--font-mono, monospace)' }}>
+              {telemetry?.orbit?.inclinationDeg?.toFixed(1) ?? '51.6'}°
+            </div>
+          </div>
+          <div style={{ width: 1, background: 'rgba(255,255,255,0.1)' }} />
+          <div>
+            <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono, monospace)' }}>PREDICTION CONFIDENCE</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#ff9f0a', fontFamily: 'var(--font-mono, monospace)' }}>
+              {predictionResult?.confidence.toFixed(1) ?? '95.0'}%
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* ── 4. RIGHT PANEL: ALERT QUEUE & SUBSYSTEM HEALTH ── */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      <aside style={{
+        background: 'rgba(4, 8, 16, 0.92)',
+        borderLeft: '1px solid rgba(0, 229, 255, 0.12)',
+        padding: '16px', display: 'flex', flexDirection: 'column', gap: 14,
+        overflowY: 'auto', zIndex: 5,
       }}>
-        {/* Health ring */}
-        <div style={{ textAlign: 'center', padding: '6px 0' }}>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.15em', color: 'rgba(255,255,255,0.35)', marginBottom: 6 }}>SPACECRAFT HEALTH</div>
-          <HealthRing value={health} />
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: statusColor, marginTop: 4 }}>
-            {healthStatus.toUpperCase()}
+        {/* Overall Health Gauge */}
+        <div style={{
+          background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 8, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div>
+            <div style={{ fontSize: 9, fontFamily: 'var(--font-mono, monospace)', color: 'rgba(255,255,255,0.4)' }}>
+              DIGITAL TWIN INTEGRITY
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: healthColor, marginTop: 2 }}>
+              {overallHealth.toFixed(1)}%
+            </div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>
+              Flight Rules: {overallHealth > 75 ? 'NOMINAL' : 'DEGRADED'}
+            </div>
+          </div>
+          <div style={{
+            width: 44, height: 44, borderRadius: '50%', border: `3px solid ${healthColor}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: `0 0 12px ${healthColor}44`,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: healthColor }}>{Math.round(overallHealth)}</span>
           </div>
         </div>
 
-        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-
-        {/* Astronaut Crew Health Card ONLY FOR HUMAN MISSIONS */}
-        {isHumanMission && crew && crew.length > 0 ? (
-          <div style={{
-            padding: '10px', background: 'rgba(0,255,136,0.04)',
-            border: '1px solid rgba(0,255,136,0.2)', borderRadius: 8,
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#00ff88', letterSpacing: '0.1em' }}>
-                👨‍🚀 ASTRONAUT CREW ({crew.length})
+        {/* Real-time Alert & Incident Queue */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 9, fontFamily: 'var(--font-mono, monospace)', color: 'rgba(255,255,255,0.4)' }}>
+              REAL-TIME ALERT QUEUE ({incidents.length})
+            </span>
+            {incidents.length > 0 && (
+              <span style={{ fontSize: 8, color: '#ff3b30', fontWeight: 700, fontFamily: 'var(--font-mono, monospace)' }}>
+                ● ACTIVE INCIDENT
               </span>
-              <button
-                onClick={() => setScreen('crew')}
+            )}
+          </div>
+
+          {incidents.length === 0 ? (
+            <div style={{
+              background: 'rgba(0,255,136,0.04)', border: '1px solid rgba(0,255,136,0.2)',
+              borderRadius: 6, padding: '12px', textAlign: 'center',
+            }}>
+              <div style={{ fontSize: 11, color: '#00ff88', fontWeight: 600 }}>All Telemetry Nominal</div>
+              <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>No boundary envelope deviations</div>
+            </div>
+          ) : (
+            incidents.slice(0, 3).map((inc) => (
+              <div
+                key={inc.id}
+                onClick={() => setSelectedSubsystem(inc.normalized_subsystem)}
                 style={{
-                  background: 'none', border: 'none', color: '#00d4ff',
-                  fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer',
+                  background: inc.severity === 'critical' ? 'rgba(255,59,48,0.1)' : 'rgba(255,159,10,0.1)',
+                  border: `1px solid ${inc.severity === 'critical' ? '#ff3b30' : '#ff9f0a'}`,
+                  borderRadius: 6, padding: '8px 10px', cursor: 'pointer',
+                  transition: 'all 0.2s ease',
                 }}
               >
-                OPEN HUD →
-              </button>
-            </div>
-            {crew.slice(0, 3).map((c) => (
-              <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#fff' }}>{c.name.split(' ').slice(-1)[0]}</span>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#00ff88' }}>{c.heartRateBpm} BPM</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#00d4ff' }}>{c.spo2Percent}%</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: inc.severity === 'critical' ? '#ff3b30' : '#ff9f0a', fontFamily: 'var(--font-mono, monospace)' }}>
+                    {inc.id}
+                  </span>
+                  <span style={{ fontSize: 8, padding: '1px 4px', borderRadius: 2, background: 'rgba(0,0,0,0.4)', color: '#fff' }}>
+                    {inc.severity.toUpperCase()}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#fff', marginTop: 4 }}>
+                  {inc.normalized_subsystem}
+                </div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.7)', marginTop: 2, lineHeight: 1.2 }}>
+                  {inc.description}
                 </div>
               </div>
-            ))}
-          </div>
-        ) : (
-          /* Robotic Payload Suite for Non-Human Missions */
-          <div style={{
-            padding: '10px', background: 'rgba(0,212,255,0.04)',
-            border: '1px solid rgba(0,212,255,0.15)', borderRadius: 8,
-          }}>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#00d4ff', letterSpacing: '0.1em', marginBottom: 4 }}>
-              🛰 SCIENTIFIC INSTRUMENT SUITE
-            </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#fff', marginBottom: 2 }}>
-              Autonomous Multispectral Ingestion
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.4)' }}>Instruments: Nominal</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#00ff88' }}>SNR: 48 dB</span>
-            </div>
-          </div>
-        )}
-
-        {/* Mission Goal & Objective */}
-        <div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.15em', color: 'rgba(0,212,255,0.7)', marginBottom: 4 }}>
-            GOAL: {config?.destination?.toUpperCase().replace('-', ' ') ?? 'EARTH ORBIT'}
-          </div>
-          <div style={{
-            padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 6, marginBottom: 8,
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.35)' }}>PHASE:</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#00d4ff' }}>{telemetry?.orbit.phaseDesc ?? 'Nominal'}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.35)' }}>DISTANCE:</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#fff' }}>{(telemetry?.orbit.distanceFromEarthKm ?? 650).toLocaleString()} km</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.35)' }}>SITE:</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#fff' }}>{config?.launchSite?.name?.split(' ')[0] ?? 'Sriharikota'}</span>
-            </div>
-          </div>
-
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.15em', color: 'rgba(255,255,255,0.35)', marginBottom: 3, display: 'flex', justifyContent: 'space-between' }}>
-            <span>OBJECTIVE PROGRESS ({Math.round(objectiveProgress)}%)</span>
-            <span style={{ color: '#00d4ff' }}>{useMissionStore.getState().missionPhase?.toUpperCase() ?? 'OPERATIONS'}</span>
-          </div>
-          <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, marginBottom: 6 }}>
-            <div style={{ height: '100%', width: `${Math.max(2, objectiveProgress)}%`, background: 'linear-gradient(90deg, #00d4ff, #00ff88)', borderRadius: 2, transition: 'width 0.8s ease' }} />
-          </div>
-          <div style={{ fontFamily: 'var(--font-body)', fontSize: 10, color: 'rgba(255,255,255,0.65)', lineHeight: 1.4, marginBottom: 8 }}>
-            {config?.objective ?? 'Scientific observation and autonomous mission telemetry.'}
-          </div>
-
-          {/* Remaining Useful Life (RUL) */}
-          <div style={{
-            padding: '8px', background: 'rgba(0,255,136,0.05)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: 6, marginBottom: 8,
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-          }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.35)' }}>EST. RUL:</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#00ff88', fontWeight: 700 }}>
-              {Math.max(0, useMissionStore.getState().rulDays).toFixed(1)} DAYS
-            </span>
-          </div>
+            ))
+          )}
         </div>
 
-        {/* AI Guardian Live Status Card */}
-        <div
-          onClick={() => setScreen('ai')}
-          style={{
-            padding: '10px', background: aiAnalysis.anomalyDetected ? 'rgba(155,93,229,0.15)' : 'rgba(0,0,0,0.25)',
-            border: `1px solid ${aiAnalysis.anomalyDetected ? '#9b5de5' : 'rgba(255,255,255,0.06)'}`,
-            borderRadius: 8, cursor: 'pointer',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#9b5de5', animation: 'ai-pulse 2s ease-in-out infinite' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#9b5de5', letterSpacing: '0.12em' }}>VYOM AI GUARDIAN</span>
-            </div>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#9b5de5' }}>OPEN KERNEL →</span>
+        {/* Subsystem Health Matrix */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono, monospace)', color: 'rgba(255,255,255,0.4)' }}>
+            SUBSYSTEM INTEGRITY MATRIX
           </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: aiAnalysis.anomalyDetected ? '#ff8c00' : 'rgba(255,255,255,0.7)', lineHeight: 1.3 }}>
-            {aiAnalysis.anomalyDetected ? `Phase [${aiAnalysis.phase.toUpperCase()}]: ${aiAnalysis.anomalyDescription}` : 'Neural kernel monitoring · All parameters nominal'}
-          </div>
+          {(satellite?.subsystems || []).map((sub) => {
+            const isSelected = selectedSubsystem === sub.name;
+            const subHealthColor = sub.health > 80 ? '#00ff88' : sub.health > 50 ? '#ff9f0a' : '#ff3b30';
+            return (
+              <div
+                key={sub.name}
+                onClick={() => setSelectedSubsystem(isSelected ? null : sub.name)}
+                style={{
+                  background: isSelected ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255,255,255,0.03)',
+                  border: isSelected ? '1px solid #00e5ff' : '1px solid rgba(255,255,255,0.06)',
+                  borderRadius: 6, padding: '6px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  cursor: 'pointer', transition: 'all 0.2s ease',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: '#fff' }}>{sub.name}</div>
+                  <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono, monospace)' }}>
+                    Temp: {sub.temperature.toFixed(1)}°C
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: subHealthColor, fontFamily: 'var(--font-mono, monospace)' }}>
+                  {sub.health.toFixed(0)}%
+                </div>
+              </div>
+            );
+          })}
         </div>
-      </div>
+      </aside>
 
-      {/* CENTER — 3D Spacecraft View or Interactive 200-Frame Planetary Twin */}
-      <div style={{ position: 'relative', background: '#020409', overflow: 'hidden' }}>
-        {centerViewMode === 'earth' ? (
-          /* Interactive 200-Frame Earth Background Animation */
-          <InteractiveEarthBackground
-            totalFrames={200}
-            autoRotateSpeed={18}
-            autoRotate={true}
-            showHud={true}
-            showVignette={true}
-          />
-        ) : (
-          /* 3D Spacecraft Canvas */
-          <Canvas gl={{ antialias: true }} dpr={[1, 2]}>
-            <PerspectiveCamera makeDefault position={[0, 0.5, 4]} fov={40} />
-            <ambientLight intensity={0.25} />
-            <directionalLight position={[4, 3, 4]} intensity={1.2} color="#fff5e8" />
-            <directionalLight position={[-3, -1, -3]} intensity={0.3} color="#aaccff" />
-            <StarField />
-            <SatelliteModel scale={1.5} />
-            <OrbitLine radius={3.2} inclination={51.6} />
-            <OrbitControls enableZoom={false} enablePan={false} />
-          </Canvas>
-        )}
-
-        {/* View Switcher Overlay (Spacecraft 3D vs. Planetary Twin) */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 14,
-            right: 16,
-            zIndex: 15,
-            display: 'flex',
-            gap: 6,
-            background: 'rgba(5, 12, 25, 0.85)',
-            border: '1px solid rgba(0, 212, 255, 0.25)',
-            borderRadius: 6,
-            padding: '3px',
-            backdropFilter: 'blur(8px)',
-          }}
-        >
-          <button
-            onClick={() => setCenterViewMode('spacecraft')}
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 8.5,
-              fontWeight: 700,
-              letterSpacing: '0.08em',
-              padding: '3px 8px',
-              background: centerViewMode === 'spacecraft' ? 'rgba(0, 212, 255, 0.25)' : 'transparent',
-              border: `1px solid ${centerViewMode === 'spacecraft' ? '#00d4ff' : 'transparent'}`,
-              borderRadius: 4,
-              color: centerViewMode === 'spacecraft' ? '#00d4ff' : 'rgba(255, 255, 255, 0.5)',
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
-          >
-            🛰️ SATELLITE 3D
-          </button>
-          <button
-            onClick={() => setCenterViewMode('earth')}
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 8.5,
-              fontWeight: 700,
-              letterSpacing: '0.08em',
-              padding: '3px 8px',
-              background: centerViewMode === 'earth' ? 'rgba(0, 212, 255, 0.25)' : 'transparent',
-              border: `1px solid ${centerViewMode === 'earth' ? '#00d4ff' : 'transparent'}`,
-              borderRadius: 4,
-              color: centerViewMode === 'earth' ? '#00d4ff' : 'rgba(255, 255, 255, 0.5)',
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
-          >
-            🌍 PLANETARY TWIN (200 HD)
-          </button>
-        </div>
-
-        {/* Overlay labels */}
-        <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 12, fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.75)', letterSpacing: '0.12em', textShadow: '0 0 10px rgba(0,0,0,0.8)' }}>
-          DIGITAL TWIN · {config?.name ?? 'VYOM-01'} · {config?.destination?.toUpperCase().replace('-', ' ') ?? 'EARTH ORBIT'}
-        </div>
-
-        {activeThreats.length > 0 && (
-          <div style={{
-            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-            zIndex: 14,
-            fontFamily: 'var(--font-display)', fontSize: 13, color: '#ff2d55',
-            letterSpacing: '0.2em', animation: 'data-flash 0.8s ease-in-out infinite',
-            pointerEvents: 'none',
-          }}>
-            ⚠ {activeThreats[0]?.name}
-          </div>
-        )}
-
-        {/* Signal & Cislunar readout */}
-        {telemetry && (
-          <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 12, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(5,12,25,0.7)', padding: '4px 10px', borderRadius: 4, backdropFilter: 'blur(4px)' }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#00d4ff', animation: 'pulse-dot 2s ease-in-out infinite' }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.85)' }}>
-              SIGNAL: {telemetry.comm.signalDbm.toFixed(0)} dBm · {telemetry.orbit.phaseDesc ?? 'Nominal'}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* RIGHT PANEL — Telemetry */}
-      <div style={{
-        background: 'rgba(5,12,25,0.94)', borderLeft: '1px solid rgba(0,212,255,0.08)',
-        padding: '14px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10,
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* ── 5. BOTTOM PANEL: TELEMETRY STRIP CHARTS & TIMELINE ── */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      <footer style={{
+        gridColumn: '1 / -1',
+        background: 'rgba(3, 7, 14, 0.96)',
+        borderTop: '1px solid rgba(0, 229, 255, 0.14)',
+        display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+        gap: 16, padding: '8px 20px', zIndex: 10,
       }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.2em', color: 'rgba(255,255,255,0.4)' }}>
-          LIVE TELEMETRY STREAM
+        {/* Power Profile Chart */}
+        <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 6, padding: '6px 10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ fontSize: 8, fontFamily: 'var(--font-mono, monospace)', color: '#00e5ff', marginBottom: 2 }}>
+            POWER GENERATION & BATTERY SOC (%)
+          </div>
+          <div style={{ height: 90 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={powerHistoryData}>
+                <YAxis domain={[0, 100]} hide />
+                <Tooltip contentStyle={{ background: '#02040a', borderColor: '#00e5ff', fontSize: 10 }} />
+                <Line type="monotone" dataKey="battery" stroke="#00e5ff" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="solar" stroke="#ff9f0a" strokeWidth={1} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
 
-        {telemetry && (
-          <>
-            {/* Power */}
-            <div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(0,212,255,0.6)', letterSpacing: '0.12em', marginBottom: 4 }}>⚡ POWER</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
-                <TelemetryMini label="BATTERY" value={telemetry.power.batteryPercent.toFixed(1)} unit="%"
-                  status={telemetry.power.batteryPercent < 25 ? 'critical' : telemetry.power.batteryPercent < 40 ? 'warning' : undefined} />
-                <TelemetryMini label="BUS VOLT" value={telemetry.power.voltageV.toFixed(1)} unit="V"
-                  status={telemetry.power.voltageV < 22 ? 'critical' : undefined} />
-                <TelemetryMini label="SOLAR GEN" value={telemetry.power.solarGenerationW.toFixed(0)} unit="W" />
-                <TelemetryMini label="LOAD DRAW" value={telemetry.power.consumptionW.toFixed(0)} unit="W" />
-              </div>
-            </div>
+        {/* Thermal Loop Profile Chart */}
+        <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 6, padding: '6px 10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ fontSize: 8, fontFamily: 'var(--font-mono, monospace)', color: '#ff9f0a', marginBottom: 2 }}>
+            THERMAL JUNCTION & BATTERY TEMPERATURE (°C)
+          </div>
+          <div style={{ height: 90 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={thermalHistoryData}>
+                <YAxis domain={[-20, 100]} hide />
+                <Tooltip contentStyle={{ background: '#02040a', borderColor: '#ff9f0a', fontSize: 10 }} />
+                <Line type="monotone" dataKey="cpu" stroke="#ff3b30" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="battery" stroke="#30d158" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
 
-            {/* Battery history chart */}
-            <div style={{ height: 44 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={powerHistory}>
-                  <Line type="monotone" dataKey="v" stroke="#00d4ff" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Thermal */}
-            <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-            <div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(0,212,255,0.6)', letterSpacing: '0.12em', marginBottom: 4 }}>🌡 THERMAL</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
-                <TelemetryMini label="CPU TEMP" value={telemetry.thermal.cpuTempC.toFixed(1)} unit="°C"
-                  status={telemetry.thermal.cpuTempC > 80 ? 'critical' : telemetry.thermal.cpuTempC > 65 ? 'warning' : undefined} />
-                <TelemetryMini label="BATTERY T" value={telemetry.thermal.batteryTempC.toFixed(1)} unit="°C" />
-                <TelemetryMini label="PAYLOAD T" value={telemetry.thermal.payloadTempC.toFixed(1)} unit="°C" />
-                <TelemetryMini label="EXT TEMP" value={telemetry.thermal.externalTempC.toFixed(0)} unit="°C" />
-              </div>
-            </div>
-
-            {/* Trajectory */}
-            <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-            <div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(0,212,255,0.6)', letterSpacing: '0.12em', marginBottom: 4 }}>
-                {isHumanMission ? '○ CISLUNAR TRAJECTORY' : '○ ORBIT MECHANICS'}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
-                <TelemetryMini label="ALTITUDE" value={telemetry.orbit.altitudeKm.toFixed(1)} unit="km" />
-                <TelemetryMini label="VELOCITY" value={telemetry.orbit.velocityKms.toFixed(2)} unit="km/s" />
-                <TelemetryMini label="ACCEL" value={(telemetry.orbit.accelerationMs2 ?? 8.09).toFixed(2)} unit="m/s²" />
-                <TelemetryMini label="G-FORCE" value={(telemetry.orbit.gForce ?? 0.82).toFixed(2)} unit="g" />
-              </div>
-            </div>
-
-            {/* Comms */}
-            <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-            <div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(0,212,255,0.6)', letterSpacing: '0.12em', marginBottom: 4 }}>📡 COMMS &amp; ATTITUDE</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
-                <TelemetryMini label="SIGNAL" value={telemetry.comm.signalDbm.toFixed(0)} unit="dBm"
-                  status={telemetry.comm.signalDbm < -95 ? 'critical' : undefined} />
-                <TelemetryMini label="RATE" value={telemetry.comm.dataRateMbps.toFixed(1)} unit="Mbps" />
-                <TelemetryMini label="ROLL" value={telemetry.attitude.rollDeg.toFixed(2)} unit="°" />
-                <TelemetryMini label="PITCH" value={telemetry.attitude.pitchDeg.toFixed(2)} unit="°" />
-              </div>
-            </div>
-
-            {/* ── v3.0 additive: Operational Decision Support risk panel ── */}
-            <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-            <MissionRiskPanel />
-          </>
-        )}
-      </div>
+        {/* Predictive Horizon Summary */}
+        <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 6, padding: '8px 12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ fontSize: 8, fontFamily: 'var(--font-mono, monospace)', color: '#bf5af2', marginBottom: 4 }}>
+            TRAJECTORY & ECLIPSE PROJECTION ({selectedHorizon.toUpperCase()})
+          </div>
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', lineHeight: 1.4 }}>
+            • Predicted Apogee: <strong style={{ color: '#00e5ff' }}>{predictionResult?.apogeePredictedKm.toFixed(1)} km</strong><br />
+            • Predicted Periapsis: <strong style={{ color: '#00e5ff' }}>{predictionResult?.perigeePredictedKm.toFixed(1)} km</strong><br />
+            • Shadow Egress: <strong style={{ color: '#ff9f0a' }}>{predictionResult?.eclipseEvents.length ?? 0} eclipse event(s) projected</strong>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

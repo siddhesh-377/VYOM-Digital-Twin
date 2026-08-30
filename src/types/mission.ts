@@ -459,7 +459,9 @@ export interface MissionState {
   archivedMissions: ArchivedMission[];
   replayEvents: BlackBoxEvent[];
   replayPosition: number;
-  dataMode: 'simulation';
+  dataMode: 'simulation' | 'live' | 'replay' | 'prediction';
+  selectedSubsystem?: string | null;
+  telemetryState?: 'LIVE' | 'SIMULATED' | 'REPLAY' | 'STALE' | 'DISCONNECTED';
 }
 
 export type AppScreen =

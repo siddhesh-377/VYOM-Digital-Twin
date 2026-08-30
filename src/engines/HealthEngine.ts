@@ -8,10 +8,9 @@ class HealthEngine {
     eventBus.subscribe('CLOCK_TICK', this.onTick);
   }
 
-  private onTick = (payload: { simDelta: number, tickCount: number }) => {
+  public onTick = (payload: { simDelta: number, tickCount: number }) => {
     const store = useMissionStore.getState();
     const t = store.telemetry;
-    console.log('[HealthEngine] onTick fired, telemetry overallHealth =', t?.overallHealth, 'cpu =', t?.thermal?.cpuTempC);
     if (!t) return;
 
     const currentHealth = t.overallHealth ?? 100;

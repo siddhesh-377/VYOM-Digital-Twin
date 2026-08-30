@@ -5,8 +5,9 @@ import type {
   ThreatScenario, BlackBoxEvent, OrbitPoint, AIAnalysis, AutonomousAction,
   SpaceEnvironment, MissionObjectiveMilestone, ArchivedMission, ControlMode,
   DispositionType, MissionStats, MissionType, CrewMember, MissionDestination,
-  CrewVitalSample
+  CrewVitalSample, Incident
 } from '../types/mission';
+import { MISSION_PROFILES } from '../types/missionProfiles';
 
 const defaultEnvironment: SpaceEnvironment = {
   solarActivityLevel: 2.4,
@@ -280,6 +281,12 @@ interface MissionStore extends MissionState {
   archiveMission: () => void;
   loadArchivedMission: (id: string) => void;
   resetMission: () => void;
+  setMissionProfile: (profileKey: 'human' | 'orbital' | 'planetary' | 'astrophysics') => void;
+  updateTelemetry: (t: Telemetry) => void;
+  setSelectedSubsystem: (subsystem: string | null) => void;
+  addIncident: (incident: Incident) => void;
+  updateIncident: (id: string, partial: Partial<Incident>) => void;
+  setTelemetryState: (state: 'LIVE' | 'SIMULATED' | 'REPLAY' | 'STALE' | 'DISCONNECTED') => void;
 }
 
 const initialState: MissionState = {
@@ -353,6 +360,8 @@ const initialState: MissionState = {
   replayEvents: [],
   replayPosition: 0,
   dataMode: 'simulation',
+  selectedSubsystem: null,
+  telemetryState: 'SIMULATED',
 };
 
 export const useMissionStore = create<MissionStore>()(
@@ -625,6 +634,49 @@ export const useMissionStore = create<MissionStore>()(
       },
 
       resetMission: () => set({ ...initialState, archivedMissions: get().archivedMissions }),
+
+      setMissionProfile: (profileKey) => {
+        const profile = MISSION_PROFILES[profileKey] || MISSION_PROFILES.orbital;
+        const milestones = buildMilestones(profile.type, profile.defaultConfig.destination);
+        const crewRoster = profile.defaultConfig.crew || [];
+        set({
+          config: profile.defaultConfig,
+          satellite: profile.satelliteConfig,
+          crew: crewRoster,
+          milestones,
+          selectedSubsystem: null,
+          telemetry: {
+            ...defaultTelemetry,
+            orbit: {
+              ...defaultTelemetry.orbit,
+              altitudeKm: profile.initialAltitudeKm,
+              inclinationDeg: profile.inclinationDeg,
+            },
+          },
+        });
+      },
+
+      updateTelemetry: (t) => {
+        get().pushTelemetry(t);
+      },
+
+      setSelectedSubsystem: (selectedSubsystem) => set({ selectedSubsystem }),
+
+      addIncident: (incident) =>
+        set((s) => {
+          if (s.incidents.some((i) => i.id === incident.id)) return {};
+          return {
+            incidents: [incident, ...s.incidents],
+            status: incident.severity === 'critical' ? 'threatened' : s.status,
+          };
+        }),
+
+      updateIncident: (id, partial) =>
+        set((s) => ({
+          incidents: s.incidents.map((i) => (i.id === id ? { ...i, ...partial } : i)),
+        })),
+
+      setTelemetryState: (telemetryState) => set({ telemetryState }),
     }),
     {
       name: 'vyom-mission-state-v3',

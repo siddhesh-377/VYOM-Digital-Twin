@@ -4,6 +4,7 @@ import { useMissionStore } from '../../store/missionStore';
 import { threatEngine } from '../../engines/ThreatEngine';
 import { backendWS, injectFaultViaBackend, submitManualActionViaBackend, fetchIncidentProcedures } from '../../services/BackendWebSocketService';
 import { cancelAIPipeline } from '../../engines/SimulationEngine';
+import { AIContextProvider } from '../../engines/AIContextProvider';
 
 const RISK_COLORS: Record<string, string> = {
   low:      '#00ff88',
@@ -102,8 +103,22 @@ export function AIScreen() {
   // ── v3.0: Manual recovery procedures (fetched per active incident) ────────
   const [proceduresByIncident, setProceduresByIncident] = useState<Record<string, any[]>>({});
   const [pendingProc, setPendingProc] = useState<{ incidentId: string; proc: any } | null>(null);
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiResponse, setAiResponse] = useState<string | null>(null);
+  const [isQuerying, setIsQuerying] = useState(false);
   const activeIncidents = storeIncidents.filter(inc => inc.status !== 'resolved' && inc.status !== 'failed');
   const latestIncident = storeIncidents.length > 0 ? storeIncidents[storeIncidents.length - 1] : null;
+
+  const handleRunQuery = (customPrompt?: string) => {
+    const q = customPrompt || aiQuery;
+    if (!q.trim()) return;
+    setIsQuerying(true);
+    setTimeout(() => {
+      const result = AIContextProvider.query(q);
+      setAiResponse(result);
+      setIsQuerying(false);
+    }, 150);
+  };
 
   useEffect(() => {
     if (controlMode !== 'manual' || !config?.id) return;
@@ -191,6 +206,94 @@ export function AIScreen() {
               📡 TRIGGER COMM FAULT
             </button>
           </div>
+        </div>
+
+        {/* ── AI Mission Control Grounded Query Console ── */}
+        <div style={{
+          padding: '16px 20px', marginBottom: 20,
+          background: 'rgba(5, 12, 24, 0.95)', border: '1px solid rgba(0, 229, 255, 0.25)',
+          borderRadius: 10, boxShadow: '0 0 20px rgba(0, 229, 255, 0.08)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#00e5ff' }}>🤖 AI MISSION CONTROL OPERATOR INTELLIGENCE</span>
+              <span style={{ fontSize: 8, padding: '2px 6px', background: 'rgba(0,255,136,0.15)', color: '#00ff88', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
+                GROUNDED DIGITAL TWIN STATE
+              </span>
+            </div>
+            <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.4)' }}>
+              ZERO HALLUCINATION · FACTUAL CONSTRAINTS
+            </span>
+          </div>
+
+          {/* Prompt Input Form */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <input
+              type="text"
+              value={aiQuery}
+              onChange={(e) => setAiQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleRunQuery()}
+              placeholder="Ask AI Operator (e.g. 'What is current mission status?', 'Why is thermal warning active?', 'Predict trajectory')..."
+              style={{
+                flex: 1, padding: '10px 14px', background: 'rgba(0,0,0,0.5)',
+                border: '1px solid rgba(0,229,255,0.3)', borderRadius: 6, color: '#fff',
+                fontSize: 11, fontFamily: 'var(--font-mono)', outline: 'none',
+              }}
+            />
+            <button
+              onClick={() => handleRunQuery()}
+              disabled={isQuerying}
+              style={{
+                background: 'linear-gradient(135deg, #00e5ff, #9b5de5)',
+                color: '#02040a', border: 'none', borderRadius: 6,
+                padding: '0 20px', fontSize: 11, fontWeight: 800,
+                cursor: 'pointer', fontFamily: 'var(--font-mono)',
+              }}
+            >
+              {isQuerying ? 'ANALYZING...' : 'QUERY AI'}
+            </button>
+          </div>
+
+          {/* Pre-canned query chips */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: aiResponse ? 12 : 0 }}>
+            {[
+              'What is current mission status?',
+              'Why is the spacecraft showing a warning?',
+              'Which subsystem has the highest risk?',
+              'What is the predicted trajectory & eclipse?',
+            ].map((chip) => (
+              <button
+                key={chip}
+                onClick={() => {
+                  setAiQuery(chip);
+                  handleRunQuery(chip);
+                }}
+                style={{
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 4, padding: '4px 8px', fontSize: 9, color: 'rgba(255,255,255,0.7)',
+                  cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                }}
+              >
+                💡 {chip}
+              </button>
+            ))}
+          </div>
+
+          {/* AI Response Output Box */}
+          {aiResponse && (
+            <motion.div
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{
+                marginTop: 12, padding: '12px 16px', background: 'rgba(0,0,0,0.6)',
+                border: '1px solid rgba(155,93,229,0.4)', borderRadius: 6,
+                fontFamily: 'var(--font-mono)', fontSize: 10.5, color: '#e0e6ed',
+                lineHeight: 1.5, whiteSpace: 'pre-line',
+              }}
+            >
+              {aiResponse}
+            </motion.div>
+          )}
         </div>
 
         {/* ── 6-Second Live AI Processing Timer Bar & Virtual Recovery Time ── */}
