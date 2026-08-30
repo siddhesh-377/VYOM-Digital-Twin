@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { useMissionStore } from '../../store/missionStore';
 import { getMissionCinematic } from '../../constants/missionVideos';
+import { getAudioPreference, toggleAudioPreference } from '../../utils/audioPreference';
 
 // Register GSAP plugins safely
 if (typeof window !== 'undefined') {
@@ -27,141 +28,207 @@ export function MissionStorytellingScroll({
   const launchVideoRef = useRef<HTMLVideoElement | null>(null);
   const deployVideoRef = useRef<HTMLVideoElement | null>(null);
 
+  const [activeChapter, setActiveChapter] = useState<number>(1);
+  const [isAudioEnabled, setIsAudioEnabled] = useState<boolean>(() => getAudioPreference());
+
+  // Handle audio toggle
+  const handleToggleSound = () => {
+    const next = toggleAudioPreference();
+    setIsAudioEnabled(next);
+    if (launchVideoRef.current) launchVideoRef.current.muted = !next;
+    if (deployVideoRef.current) deployVideoRef.current.muted = !next;
+  };
+
+  // Scroll to specific section
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   // GSAP Animations & ScrollTriggers setup
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
     // Check if user prefers reduced motion
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReducedMotion) return;
 
     const ctx = gsap.context(() => {
       // 1. Hero Introduction Reveal
-      gsap.from('.story-hero-title', {
-        opacity: 0,
-        y: 40,
-        duration: 1.2,
-        ease: 'power3.out',
-      });
+      gsap.fromTo(
+        '.story-hero-title',
+        { opacity: 0, y: 30 },
+        { opacity: 1, y: 0, duration: 1.0, ease: 'power3.out' }
+      );
 
-      gsap.from('.story-hero-sub', {
-        opacity: 0,
-        y: 20,
-        duration: 1,
-        delay: 0.3,
-        ease: 'power3.out',
-      });
+      gsap.fromTo(
+        '.story-hero-sub',
+        { opacity: 0, y: 20 },
+        { opacity: 1, y: 0, duration: 0.9, delay: 0.2, ease: 'power3.out' }
+      );
 
-      // 2. Launch Section Reveal & Video Scale
-      ScrollTrigger.create({
-        trigger: '.story-launch-section',
-        start: 'top 80%',
-        end: 'bottom 20%',
-        onEnter: () => {
-          if (launchVideoRef.current && launchVideoRef.current.paused) {
-            launchVideoRef.current.play().catch(() => {});
-          }
-        },
-        onLeave: () => {
-          if (launchVideoRef.current) launchVideoRef.current.pause();
-        },
-        onEnterBack: () => {
-          if (launchVideoRef.current && launchVideoRef.current.paused) {
-            launchVideoRef.current.play().catch(() => {});
-          }
-        },
-        onLeaveBack: () => {
-          if (launchVideoRef.current) launchVideoRef.current.pause();
-        },
-      });
-
-      gsap.from('.story-launch-video-card', {
-        scrollTrigger: {
-          trigger: '.story-launch-section',
-          start: 'top 75%',
-          toggleActions: 'play none none reverse',
-        },
-        opacity: 0,
-        scale: 0.92,
-        y: 50,
-        duration: 1.2,
-        ease: 'power2.out',
-      });
-
-      gsap.from('.story-launch-text', {
-        scrollTrigger: {
-          trigger: '.story-launch-section',
+      if (!prefersReducedMotion) {
+        // 2. Launch Section Reveal
+        ScrollTrigger.create({
+          trigger: '#story-launch-section',
+          scroller: container,
           start: 'top 70%',
-          toggleActions: 'play none none reverse',
-        },
-        opacity: 0,
-        x: -40,
-        duration: 1,
-        ease: 'power2.out',
-      });
+          end: 'bottom 30%',
+          onEnter: () => {
+            setActiveChapter(2);
+            if (launchVideoRef.current && launchVideoRef.current.paused) {
+              launchVideoRef.current.play().catch(() => {});
+            }
+          },
+          onEnterBack: () => {
+            setActiveChapter(2);
+            if (launchVideoRef.current && launchVideoRef.current.paused) {
+              launchVideoRef.current.play().catch(() => {});
+            }
+          },
+          onLeave: () => {
+            if (launchVideoRef.current) launchVideoRef.current.pause();
+          },
+          onLeaveBack: () => {
+            setActiveChapter(1);
+            if (launchVideoRef.current) launchVideoRef.current.pause();
+          },
+        });
 
-      // 3. Deployment Section Reveal & Video Scale
-      ScrollTrigger.create({
-        trigger: '.story-deploy-section',
-        start: 'top 80%',
-        end: 'bottom 20%',
-        onEnter: () => {
-          if (deployVideoRef.current && deployVideoRef.current.paused) {
-            deployVideoRef.current.play().catch(() => {});
+        gsap.fromTo(
+          '.story-launch-video-card',
+          { opacity: 0, scale: 0.94, y: 40 },
+          {
+            scrollTrigger: {
+              trigger: '#story-launch-section',
+              scroller: container,
+              start: 'top 75%',
+              toggleActions: 'play none none reverse',
+            },
+            opacity: 1,
+            scale: 1,
+            y: 0,
+            duration: 1.0,
+            ease: 'power2.out',
           }
-        },
-        onLeave: () => {
-          if (deployVideoRef.current) deployVideoRef.current.pause();
-        },
-        onEnterBack: () => {
-          if (deployVideoRef.current && deployVideoRef.current.paused) {
-            deployVideoRef.current.play().catch(() => {});
+        );
+
+        gsap.fromTo(
+          '.story-launch-text',
+          { opacity: 0, x: -30 },
+          {
+            scrollTrigger: {
+              trigger: '#story-launch-section',
+              scroller: container,
+              start: 'top 70%',
+              toggleActions: 'play none none reverse',
+            },
+            opacity: 1,
+            x: 0,
+            duration: 0.9,
+            ease: 'power2.out',
           }
-        },
-        onLeaveBack: () => {
-          if (deployVideoRef.current) deployVideoRef.current.pause();
-        },
-      });
+        );
 
-      gsap.from('.story-deploy-video-card', {
-        scrollTrigger: {
-          trigger: '.story-deploy-section',
-          start: 'top 75%',
-          toggleActions: 'play none none reverse',
-        },
-        opacity: 0,
-        scale: 0.92,
-        y: 50,
-        duration: 1.2,
-        ease: 'power2.out',
-      });
-
-      gsap.from('.story-deploy-text', {
-        scrollTrigger: {
-          trigger: '.story-deploy-section',
+        // 3. Deployment Section Reveal
+        ScrollTrigger.create({
+          trigger: '#story-deploy-section',
+          scroller: container,
           start: 'top 70%',
-          toggleActions: 'play none none reverse',
-        },
-        opacity: 0,
-        x: 40,
-        duration: 1,
-        ease: 'power2.out',
-      });
+          end: 'bottom 30%',
+          onEnter: () => {
+            setActiveChapter(3);
+            if (deployVideoRef.current && deployVideoRef.current.paused) {
+              deployVideoRef.current.play().catch(() => {});
+            }
+          },
+          onEnterBack: () => {
+            setActiveChapter(3);
+            if (deployVideoRef.current && deployVideoRef.current.paused) {
+              deployVideoRef.current.play().catch(() => {});
+            }
+          },
+          onLeave: () => {
+            if (deployVideoRef.current) deployVideoRef.current.pause();
+          },
+          onLeaveBack: () => {
+            setActiveChapter(2);
+            if (deployVideoRef.current) deployVideoRef.current.pause();
+          },
+        });
 
-      // 4. Mission Deployed Final Card
-      gsap.from('.story-final-card', {
-        scrollTrigger: {
-          trigger: '.story-final-section',
-          start: 'top 80%',
-          toggleActions: 'play none none reverse',
-        },
-        opacity: 0,
-        scale: 0.85,
-        y: 30,
-        duration: 1.2,
-        ease: 'back.out(1.4)',
-      });
-    }, containerRef);
+        gsap.fromTo(
+          '.story-deploy-video-card',
+          { opacity: 0, scale: 0.94, y: 40 },
+          {
+            scrollTrigger: {
+              trigger: '#story-deploy-section',
+              scroller: container,
+              start: 'top 75%',
+              toggleActions: 'play none none reverse',
+            },
+            opacity: 1,
+            scale: 1,
+            y: 0,
+            duration: 1.0,
+            ease: 'power2.out',
+          }
+        );
+
+        gsap.fromTo(
+          '.story-deploy-text',
+          { opacity: 0, x: 30 },
+          {
+            scrollTrigger: {
+              trigger: '#story-deploy-section',
+              scroller: container,
+              start: 'top 70%',
+              toggleActions: 'play none none reverse',
+            },
+            opacity: 1,
+            x: 0,
+            duration: 0.9,
+            ease: 'power2.out',
+          }
+        );
+
+        // 4. Mission Deployed Final Card
+        ScrollTrigger.create({
+          trigger: '#story-final-section',
+          scroller: container,
+          start: 'top 70%',
+          onEnter: () => setActiveChapter(4),
+          onLeaveBack: () => setActiveChapter(3),
+        });
+
+        gsap.fromTo(
+          '.story-final-card',
+          { opacity: 0, scale: 0.9, y: 30 },
+          {
+            scrollTrigger: {
+              trigger: '#story-final-section',
+              scroller: container,
+              start: 'top 80%',
+              toggleActions: 'play none none reverse',
+            },
+            opacity: 1,
+            scale: 1,
+            y: 0,
+            duration: 1.1,
+            ease: 'power2.out',
+          }
+        );
+      }
+    }, container);
+
+    const timer = setTimeout(() => {
+      ScrollTrigger.refresh();
+    }, 150);
 
     return () => {
+      clearTimeout(timer);
       ctx.revert();
     };
   }, []);
@@ -192,23 +259,114 @@ export function MissionStorytellingScroll({
         }}
       />
 
-      {/* Floating Skip Header */}
+      {/* ── Left Chapter Progress Tracker ── */}
       <div
         style={{
           position: 'fixed',
-          top: 20,
-          right: 24,
-          zIndex: 20,
+          top: '50%',
+          left: 24,
+          transform: 'translateY(-50%)',
+          zIndex: 25,
           display: 'flex',
+          flexDirection: 'column',
+          gap: 14,
+          background: 'rgba(5, 12, 28, 0.75)',
+          backdropFilter: 'blur(10px)',
+          border: '1px solid rgba(0, 212, 255, 0.2)',
+          borderRadius: 24,
+          padding: '14px 10px',
+        }}
+      >
+        {[
+          { id: 'story-hero-section', num: 1, title: 'BRIEFING' },
+          { id: 'story-launch-section', num: 2, title: 'ASCENT' },
+          { id: 'story-deploy-section', num: 3, title: 'DEPLOYMENT' },
+          { id: 'story-final-section', num: 4, title: 'DIGITAL TWIN' },
+        ].map((ch) => {
+          const isActive = activeChapter === ch.num;
+          return (
+            <button
+              key={ch.id}
+              onClick={() => scrollToSection(ch.id)}
+              title={ch.title}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '4px 6px',
+              }}
+            >
+              <div
+                style={{
+                  width: isActive ? 10 : 6,
+                  height: isActive ? 10 : 6,
+                  borderRadius: '50%',
+                  background: isActive ? cinematic.accentColor : 'rgba(255,255,255,0.25)',
+                  boxShadow: isActive ? `0 0 10px ${cinematic.accentColor}` : 'none',
+                  transition: 'all 0.3s ease',
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 8.5,
+                  color: isActive ? '#ffffff' : 'rgba(255,255,255,0.35)',
+                  fontWeight: isActive ? 700 : 400,
+                  letterSpacing: '0.1em',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                0{ch.num}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Top Right Controls Header ── */}
+      <div
+        style={{
+          position: 'fixed',
+          top: 18,
+          right: 24,
+          zIndex: 30,
+          display: 'flex',
+          alignItems: 'center',
           gap: 12,
         }}
       >
+        {/* Sound Toggle */}
+        <button
+          onClick={handleToggleSound}
+          style={{
+            padding: '6px 14px',
+            background: 'rgba(5, 12, 28, 0.85)',
+            border: `1px solid ${isAudioEnabled ? cinematic.accentColor : 'rgba(255,255,255,0.2)'}`,
+            borderRadius: 6,
+            color: isAudioEnabled ? cinematic.accentColor : 'rgba(255,255,255,0.6)',
+            fontFamily: 'var(--font-mono, monospace)',
+            fontSize: 9.5,
+            fontWeight: 700,
+            letterSpacing: '0.1em',
+            backdropFilter: 'blur(8px)',
+            cursor: 'pointer',
+            boxShadow: isAudioEnabled ? `0 0 15px ${cinematic.accentColor}33` : 'none',
+            transition: 'all 0.2s',
+          }}
+        >
+          {isAudioEnabled ? '🔊 SOUND ON' : '🔇 SOUND OFF'}
+        </button>
+
+        {/* Skip to Universe */}
         <button
           onClick={onComplete}
           style={{
-            padding: '8px 18px',
+            padding: '7px 18px',
             background: 'rgba(5, 12, 28, 0.85)',
-            border: '1px solid rgba(0, 212, 255, 0.3)',
+            border: '1px solid rgba(0, 212, 255, 0.4)',
             borderRadius: 6,
             color: '#00d4ff',
             fontFamily: 'var(--font-mono, monospace)',
@@ -218,6 +376,7 @@ export function MissionStorytellingScroll({
             backdropFilter: 'blur(8px)',
             cursor: 'pointer',
             boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            transition: 'all 0.2s',
           }}
         >
           SKIP TO UNIVERSE ➔
@@ -226,14 +385,15 @@ export function MissionStorytellingScroll({
 
       {/* ── 1. MISSION INTRODUCTION HERO SECTION ── */}
       <section
+        id="story-hero-section"
         style={{
-          minHeight: '90vh',
+          minHeight: '92vh',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
           textAlign: 'center',
-          padding: '60px 24px',
+          padding: '80px 24px',
           position: 'relative',
           zIndex: 2,
         }}
@@ -268,7 +428,7 @@ export function MissionStorytellingScroll({
               letterSpacing: '0.2em',
             }}
           >
-            MISSION BRIEFING & DEPLOYMENT
+            MISSION STORYLINE · CHAPTER 01
           </span>
         </div>
 
@@ -293,13 +453,13 @@ export function MissionStorytellingScroll({
           style={{
             fontFamily: 'var(--font-sans, Inter, sans-serif)',
             fontSize: 'clamp(14px, 1.8vw, 18px)',
-            color: 'rgba(255,255,255,0.7)',
-            maxWidth: 700,
+            color: 'rgba(255,255,255,0.85)',
+            maxWidth: 720,
             lineHeight: 1.6,
             margin: '0 0 32px',
           }}
         >
-          {cinematic.subtitle} · Destination: <strong style={{ color: '#ffffff' }}>{config?.destination || 'Low Earth Orbit'}</strong>
+          {cinematic.subtitle} · Destination: <strong style={{ color: cinematic.accentColor }}>{config?.destination || 'Low Earth Orbit'}</strong>
         </p>
 
         {/* Mission Objectives Snapshot */}
@@ -368,13 +528,28 @@ export function MissionStorytellingScroll({
           </div>
         </div>
 
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(0,212,255,0.7)', letterSpacing: '0.15em' }}>
+        <button
+          onClick={() => scrollToSection('story-launch-section')}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: '#00d4ff',
+            letterSpacing: '0.15em',
+            background: 'rgba(0,212,255,0.1)',
+            border: '1px solid rgba(0,212,255,0.3)',
+            borderRadius: 20,
+            padding: '8px 20px',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+          }}
+        >
           ▼ SCROLL TO COMMENCE LAUNCH SEQUENCE
-        </div>
+        </button>
       </section>
 
       {/* ── 2. LAUNCH PHASE & VIDEO SECTION ── */}
       <section
+        id="story-launch-section"
         className="story-launch-section"
         style={{
           minHeight: '100vh',
@@ -428,7 +603,7 @@ export function MissionStorytellingScroll({
               style={{
                 fontFamily: 'var(--font-sans, Inter, sans-serif)',
                 fontSize: 15,
-                color: 'rgba(255,255,255,0.8)',
+                color: 'rgba(255,255,255,0.85)',
                 lineHeight: 1.6,
                 margin: '0 0 24px',
               }}
@@ -436,7 +611,7 @@ export function MissionStorytellingScroll({
               "{cinematic.launch.description}"
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28 }}>
               {cinematic.launch.subsystemHighlights.map((hl, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#00ff88' }} />
@@ -446,6 +621,22 @@ export function MissionStorytellingScroll({
                 </div>
               ))}
             </div>
+
+            <button
+              onClick={() => scrollToSection('story-deploy-section')}
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10,
+                color: cinematic.accentColor,
+                background: 'rgba(255,255,255,0.05)',
+                border: `1px solid ${cinematic.accentColor}55`,
+                borderRadius: 6,
+                padding: '8px 16px',
+                cursor: 'pointer',
+              }}
+            >
+              PROCEED TO DEPLOYMENT PHASE ▼
+            </button>
           </div>
 
           {/* Right Video Card */}
@@ -464,10 +655,10 @@ export function MissionStorytellingScroll({
             <video
               ref={launchVideoRef}
               src={cinematic.launch.videoUrl}
-              muted
+              muted={!isAudioEnabled}
               loop
               playsInline
-              preload="metadata"
+              preload="auto"
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
             <div
@@ -475,7 +666,7 @@ export function MissionStorytellingScroll({
                 position: 'absolute',
                 bottom: 12,
                 left: 14,
-                background: 'rgba(2,6,15,0.8)',
+                background: 'rgba(2,6,15,0.85)',
                 backdropFilter: 'blur(6px)',
                 padding: '4px 10px',
                 borderRadius: 4,
@@ -493,6 +684,7 @@ export function MissionStorytellingScroll({
 
       {/* ── 3. DEPLOYMENT PHASE & VIDEO SECTION ── */}
       <section
+        id="story-deploy-section"
         className="story-deploy-section"
         style={{
           minHeight: '100vh',
@@ -531,10 +723,10 @@ export function MissionStorytellingScroll({
             <video
               ref={deployVideoRef}
               src={cinematic.deployment.videoUrl}
-              muted
+              muted={!isAudioEnabled}
               loop
               playsInline
-              preload="metadata"
+              preload="auto"
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
             <div
@@ -542,7 +734,7 @@ export function MissionStorytellingScroll({
                 position: 'absolute',
                 bottom: 12,
                 left: 14,
-                background: 'rgba(2,6,15,0.8)',
+                background: 'rgba(2,6,15,0.85)',
                 backdropFilter: 'blur(6px)',
                 padding: '4px 10px',
                 borderRadius: 4,
@@ -588,7 +780,7 @@ export function MissionStorytellingScroll({
               style={{
                 fontFamily: 'var(--font-sans, Inter, sans-serif)',
                 fontSize: 15,
-                color: 'rgba(255,255,255,0.8)',
+                color: 'rgba(255,255,255,0.85)',
                 lineHeight: 1.6,
                 margin: '0 0 24px',
               }}
@@ -596,7 +788,7 @@ export function MissionStorytellingScroll({
               "{cinematic.deployment.description}"
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28 }}>
               {cinematic.deployment.subsystemHighlights.map((hl, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 6, height: 6, borderRadius: '50%', background: cinematic.accentColor }} />
@@ -606,15 +798,32 @@ export function MissionStorytellingScroll({
                 </div>
               ))}
             </div>
+
+            <button
+              onClick={() => scrollToSection('story-final-section')}
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10,
+                color: '#00ff88',
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(0,255,136,0.3)',
+                borderRadius: 6,
+                padding: '8px 16px',
+                cursor: 'pointer',
+              }}
+            >
+              PROCEED TO MISSION COMPLETE ▼
+            </button>
           </div>
         </div>
       </section>
 
       {/* ── 4. MISSION DEPLOYED FINAL STATUS & CTA SECTION ── */}
       <section
+        id="story-final-section"
         className="story-final-section"
         style={{
-          minHeight: '80vh',
+          minHeight: '85vh',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -629,8 +838,8 @@ export function MissionStorytellingScroll({
           className="story-final-card"
           style={{
             maxWidth: 680,
-            background: 'rgba(5, 14, 32, 0.9)',
-            border: `1px solid rgba(0, 212, 255, 0.3)`,
+            background: 'rgba(5, 14, 32, 0.92)',
+            border: `1px solid rgba(0, 212, 255, 0.35)`,
             borderRadius: 16,
             padding: '40px 32px',
             backdropFilter: 'blur(16px)',
@@ -678,7 +887,7 @@ export function MissionStorytellingScroll({
             style={{
               fontFamily: 'var(--font-sans, Inter, sans-serif)',
               fontSize: 14,
-              color: 'rgba(255,255,255,0.8)',
+              color: 'rgba(255,255,255,0.85)',
               lineHeight: 1.6,
               margin: '0 0 32px',
             }}
@@ -697,11 +906,31 @@ export function MissionStorytellingScroll({
                 letterSpacing: '0.15em',
                 background: `linear-gradient(135deg, ${cinematic.accentColor}, #00d4ff)`,
                 color: '#020409',
+                borderRadius: 8,
                 boxShadow: `0 0 30px rgba(0, 212, 255, 0.4)`,
+                cursor: 'pointer',
               }}
             >
-              ENTER UNIVERSE & DIGITAL TWIN ➔
+              ENTER UNIVERSE &amp; DIGITAL TWIN ➔
             </button>
+            {onEnterMissionControl && (
+              <button
+                onClick={onEnterMissionControl}
+                style={{
+                  padding: '12px 24px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: '0.12em',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  color: '#ffffff',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                }}
+              >
+                MISSION CONTROL ➔
+              </button>
+            )}
           </div>
         </div>
       </section>

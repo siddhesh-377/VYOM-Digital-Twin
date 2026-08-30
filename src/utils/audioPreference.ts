@@ -19,3 +19,10 @@ export function setAudioPreference(enabled: boolean): void {
     // Ignore storage restrictions
   }
 }
+
+export function toggleAudioPreference(): boolean {
+  const current = getAudioPreference();
+  const next = !current;
+  setAudioPreference(next);
+  return next;
+}
