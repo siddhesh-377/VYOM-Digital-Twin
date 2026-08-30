@@ -454,7 +454,7 @@ export const InteractiveEarthBackground: React.FC<InteractiveEarthBackgroundProp
                 textTransform: 'uppercase',
               }}
             >
-              Earth Digital Twin · 200 HD Frames
+              Earth Digital Twin · 360° Rotation
             </span>
             <span
               style={{
@@ -465,7 +465,7 @@ export const InteractiveEarthBackground: React.FC<InteractiveEarthBackgroundProp
                 letterSpacing: '0.08em',
               }}
             >
-              FRAME {String(displayFrame).padStart(3, '0')} / 200 · 360° ROTATION
+              FRAME {String(displayFrame).padStart(3, '0')} / {totalFrames}
             </span>
           </div>
 

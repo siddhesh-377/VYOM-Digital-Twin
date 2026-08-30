@@ -182,7 +182,7 @@ export function MissionControlScreen() {
 
         {/* Mission Type Switcher Buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.4)', padding: '4px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)' }}>
-          {(['human', 'orbital', 'planetary', 'astrophysics'] as const).map((key) => {
+          {(['human', 'orbital', 'astrophysics'] as const).map((key) => {
             const prof = MISSION_PROFILES[key];
             const isActive = activeMissionKey === key;
             return (
