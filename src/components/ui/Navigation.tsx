@@ -2,23 +2,28 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
 import type { AppScreen } from '../../types/mission';
-import { formatElapsed } from '../screens/MissionControlScreen';
+
+function formatMissionElapsed(day: number): string {
+  const totalSecs = Math.floor(day * 86400);
+  const d = Math.floor(totalSecs / 86400);
+  const h = Math.floor((totalSecs % 86400) / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return `${d}d ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 
 const BASE_NAV_ITEMS: { screen: AppScreen; label: string; icon: string; humanOnly?: boolean }[] = [
   { screen: 'mission-control', label: 'MISSION CONTROL', icon: '⬡' },
   { screen: 'crew', label: 'CREW VITALS', icon: '👨‍🚀', humanOnly: true },
-  { screen: 'planning', label: 'PLANNING', icon: '📅' },
   { screen: 'digital-twin', label: 'DIGITAL TWIN', icon: '◈' },
-  { screen: 'architecture', label: 'ARCHITECTURE', icon: '🏗️' },
   { screen: 'orbit', label: 'TRAJECTORY', icon: '○' },
   { screen: 'universe', label: 'UNIVERSE', icon: '✦' },
   { screen: 'telemetry', label: 'TELEMETRY', icon: '≋' },
   { screen: 'environment', label: 'ENVIRONMENT', icon: '◐' },
-  { screen: 'scenarios', label: 'SCENARIOS', icon: '⚡' },
-  { screen: 'danger-decision', label: 'DANGER SIM', icon: '⚠️' },
+  { screen: 'scenarios', label: 'DANGER SIM', icon: '⚡' },
+  { screen: 'danger-decision', label: 'DECISION TREE', icon: '⚠️' },
   { screen: 'ai', label: 'VYOM AI', icon: '◉' },
   { screen: 'mission-time', label: 'MISSION TIME', icon: '◷' },
-  { screen: 'timeline', label: 'TIMELINE', icon: '⌛' },
   { screen: 'blackbox', label: 'BLACK BOX', icon: '▣' },
   { screen: 'replay', label: 'REPLAY', icon: '▶' },
   { screen: 'reports', label: 'REPORTS', icon: '≡' },
@@ -64,8 +69,8 @@ export function Navigation() {
         style={{
           position: 'fixed', bottom: 0, left: 0, right: 0,
           zIndex: 1000,
-          background: 'rgba(4, 8, 16, 0.96)',
-          borderTop: '1px solid rgba(0, 212, 255, 0.18)',
+          background: 'rgba(2, 4, 9, 0.95)',
+          borderTop: '1px solid rgba(0, 212, 255, 0.15)',
           backdropFilter: 'blur(16px)',
           display: 'flex', alignItems: 'stretch',
           height: isMobile ? 50 : 56,
@@ -111,7 +116,7 @@ export function Navigation() {
                 }}
                 title="Play launch sequence"
               >
-                🚀
+                🚀 LAUNCH
               </button>
               <button
                 onClick={() => setScreen('onboarding')}
@@ -185,7 +190,7 @@ export function Navigation() {
               DAY {String(Math.floor(missionDay)).padStart(3, '0')}
             </div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 7.5, color: '#00d4ff' }}>
-              {formatElapsed(missionDay)}
+              {formatMissionElapsed(missionDay)}
             </div>
           </div>
         )}
