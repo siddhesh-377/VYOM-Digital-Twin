@@ -729,15 +729,21 @@ function UniverseSatellite({
 }) {
   const satGroupRef = useRef<THREE.Group>(null);
   const telemetry = useMissionStore((s) => s.telemetry);
+  const config = useMissionStore((s) => s.config);
   const orbitTrail = useMissionStore((s) => s.orbitTrail);
   const posVec = useMemo(() => new THREE.Vector3(), []);
   
-  const orbitRadius = 4.2;
+  const isOrbitalObs = config?.type === 'orbital';
+  const isAstrophysics = config?.type === 'astrophysics';
+  const isPlanetary = config?.type === 'planetary';
+  const isHuman = config?.type === 'human';
+
+  const orbitRadius = isAstrophysics ? 6.0 : isPlanetary ? 5.2 : 4.2;
   const incl = (telemetry?.orbit.inclinationDeg ?? 51.6) * (Math.PI / 180);
 
   useFrame(() => {
     if (!satGroupRef.current) return;
-    const speed = 1.8;
+    const speed = isAstrophysics ? 0.8 : isPlanetary ? 1.2 : 1.8;
     const angle = simTime * speed * 0.4;
 
     const localX = Math.cos(angle) * orbitRadius;
@@ -758,16 +764,47 @@ function UniverseSatellite({
       <group position={earthPos} rotation={[incl, 0, 0]}>
          <mesh rotation={[Math.PI / 2, 0, 0]}>
            <ringGeometry args={[orbitRadius - 0.02, orbitRadius + 0.02, 128]} />
-           <meshBasicMaterial color="#00ff88" transparent opacity={0.4} side={THREE.DoubleSide} />
+           <meshBasicMaterial color={isHuman ? '#00ff88' : isOrbitalObs ? '#00d4ff' : isPlanetary ? '#ff8c00' : '#bf5af2'} transparent opacity={0.4} side={THREE.DoubleSide} />
          </mesh>
       </group>
       
       <group ref={satGroupRef} onClick={(e) => { e.stopPropagation(); onSelect(); }}>
-        <DynamicSpacecraftModel scale={0.4} interactive={isTarget} />
-        {/* Target Marker */}
+        <DynamicSpacecraftModel scale={0.45} interactive={isTarget} />
+
+        {/* Orbital Observation: Ground Sensor Coverage Cone */}
+        {isOrbitalObs && (
+          <group position={[0, -0.6, 0]} rotation={[0, 0, 0]}>
+            <mesh position={[0, -0.8, 0]}>
+              <coneGeometry args={[0.9, 1.6, 16, 1, true]} />
+              <meshBasicMaterial color="#00d4ff" transparent opacity={0.12} side={THREE.DoubleSide} depthWrite={false} />
+            </mesh>
+          </group>
+        )}
+
+        {/* Astrophysics: Deep Space Optical Axis Vector */}
+        {isAstrophysics && (
+          <group position={[0, 0, 0.8]} rotation={[0, 0, 0]}>
+            <mesh position={[0, 0, 2.0]} rotation={[Math.PI / 2, 0, 0]}>
+              <cylinderGeometry args={[0.01, 0.4, 4.0, 16]} />
+              <meshBasicMaterial color="#bf5af2" transparent opacity={0.18} depthWrite={false} />
+            </mesh>
+          </group>
+        )}
+
+        {/* Planetary Probe: Cruise Velocity Vector */}
+        {isPlanetary && (
+          <group position={[0.4, 0, 0]}>
+            <mesh position={[0.6, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.015, 0.015, 1.2, 8]} />
+              <meshBasicMaterial color="#ff8c00" transparent opacity={0.6} />
+            </mesh>
+          </group>
+        )}
+
+        {/* Target Selection Marker */}
         {isTarget && (
           <mesh>
-            <sphereGeometry args={[1.2, 16, 16]} />
+            <sphereGeometry args={[1.3, 16, 16]} />
             <meshBasicMaterial color="#00d4ff" wireframe transparent opacity={0.5} />
           </mesh>
         )}
