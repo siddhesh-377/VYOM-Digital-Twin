@@ -19,6 +19,26 @@ interface DynamicSpacecraftModelProps {
   activeThreatOverride?: string | null;
 }
 
+export function resolveSpacecraftModelType(type?: string | null, configType?: string | null): SpacecraftModelType {
+  const raw = (type || configType || '').toLowerCase();
+  if (raw === 'crewed_capsule' || raw === 'earth_observer' || raw === 'planetary_probe' || raw === 'space_telescope') {
+    return raw as SpacecraftModelType;
+  }
+  if (raw.includes('crew') || raw.includes('human') || raw.includes('capsule') || raw.includes('gaganyaan') || raw.includes('chandrayaan')) {
+    return 'crewed_capsule';
+  }
+  if (raw.includes('probe') || raw.includes('mars') || raw.includes('planetary') || raw.includes('mangalyaan')) {
+    return 'planetary_probe';
+  }
+  if (raw.includes('telescope') || raw.includes('astrophysics') || raw.includes('astrosat') || raw.includes('deep-space') || raw.includes('observatory')) {
+    return 'space_telescope';
+  }
+  if (raw.includes('observer') || raw.includes('cartosat') || raw.includes('earth') || raw.includes('imaging') || raw.includes('orbital')) {
+    return 'earth_observer';
+  }
+  return 'crewed_capsule';
+}
+
 export function DynamicSpacecraftModel({
   modelType,
   interactive = false,
@@ -51,12 +71,8 @@ export function DynamicSpacecraftModel({
 
   // Determine model type from store config if not explicitly passed
   const activeType = useMemo<SpacecraftModelType>(() => {
-    if (modelType) return modelType;
-    if (config?.type === 'human') return 'crewed_capsule';
-    if (config?.type === 'planetary') return 'planetary_probe';
-    if (config?.type === 'astrophysics') return 'space_telescope';
-    return 'earth_observer';
-  }, [modelType, config]);
+    return resolveSpacecraftModelType(modelType, config?.type);
+  }, [modelType, config?.type]);
 
   // Failure mode checks
   const isThermalThreat = currentThreat?.includes('thermal') || currentThreat?.includes('solar');

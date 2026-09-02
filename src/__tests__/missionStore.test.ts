@@ -15,7 +15,7 @@ describe('missionStore', () => {
     const s = useMissionStore.getState();
     expect(s.status).toBe('active');
     expect(s.telemetry.overallHealth).toBe(98.5);
-    expect(s.missionDay).toBe(0.1);
+    expect(s.missionDay).toBe(0.0);
   });
 
   it('addThreat sets status to threatened and counts it', () => {
@@ -54,7 +54,7 @@ describe('missionStore', () => {
     const store = useMissionStore.getState();
     store.setTimeMultiplier(2);
     store.tickMission(60 * 60 * 24 * 1000); // 1 real day at 2x
-    expect(useMissionStore.getState().missionDay).toBeCloseTo(0.1 + 2, 3);
+    expect(useMissionStore.getState().missionDay).toBeCloseTo(2, 3);
     expect(useMissionStore.getState().elapsedRealMs).toBe(60 * 60 * 24 * 1000);
   });
 
@@ -102,7 +102,7 @@ describe('missionStore', () => {
     expect(s.status).toBe('active');
     expect(s.missionDay).toBe(0);
     expect(s.milestones.length).toBeGreaterThan(0);
-    expect(s.objectiveProgress).toBe(2);
+    expect(s.objectiveProgress).toBe(0);
   });
 
   it('archiveMission persists to archivedMissions', () => {

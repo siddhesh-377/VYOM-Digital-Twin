@@ -12,6 +12,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.5",
     "jsdom": "^29.1.1",
+    "puppeteer-core": "^25.9.0",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.11"

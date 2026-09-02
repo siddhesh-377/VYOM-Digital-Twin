@@ -106,8 +106,10 @@ let aiPipelineTimer: any = null;
 let currentAiSteps: AIReasoningStep[] = [];
 
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
-function clamp(v: number, min: number, max: number) { return Math.max(min, Math.min(max, v)); }
-function noise(amp: number) { return (Math.random() - 0.5) * 2 * amp; }
+function clamp(v: number, min: number, max: number) {
+  if (isNaN(v) || v === null || v === undefined) return min;
+  return Math.max(min, Math.min(max, v));
+}
 
 function getAtmosphericData(altKm: number) {
   if (altKm < 12) {
@@ -153,10 +155,8 @@ function applyThreatEffects(state: TelemetryState): TelemetryState {
     s.cpu += sev * 6.0;
   }
   if (e.power) {
-    s.battery = Math.max(8.0, s.battery - e.power * 6.5);
-    s.voltage = Math.max(18.5, s.voltage - e.power * 1.8);
     s.solar = Math.max(10, s.solar * (1 - e.power * 0.15));
-    s.consumption = Math.max(40, s.consumption - e.power * 8);
+    s.consumption = Math.max(40, s.consumption * 1.15);
     s.health = Math.max(20, s.health - e.power * 0.05);
   }
   if (e.thermal) {
@@ -206,11 +206,11 @@ function tickCrewVitals(crew: CrewMember[], missionDay: number, envRadiation: nu
       targetStress += 25;
     }
 
-    const hr = clamp(lerp(c.heartRateBpm, targetHeartRate, 0.05) + noise(1.5), 48, 165);
-    const spo2 = clamp(lerp(c.spo2Percent, targetSpO2, 0.02) + noise(0.1), 91, 100);
-    const resp = clamp(lerp(c.respirationBpm, targetRespiration, 0.03) + noise(0.4), 8, 34);
-    const temp = clamp(lerp(c.coreTempC, 36.8 + (isEVA ? 0.3 : 0), 0.01) + noise(0.02), 35.8, 38.6);
-    const stress = clamp(lerp(c.stressIndex, targetStress, 0.06) + noise(1), 0, 100);
+    const hr = clamp(lerp(c.heartRateBpm, targetHeartRate, 0.04), 48, 165);
+    const spo2 = clamp(lerp(c.spo2Percent, targetSpO2, 0.02), 91, 100);
+    const resp = clamp(lerp(c.respirationBpm, targetRespiration, 0.03), 8, 34);
+    const temp = clamp(lerp(c.coreTempC, 36.8 + (isEVA ? 0.3 : 0), 0.01), 35.8, 38.6);
+    const stress = clamp(lerp(c.stressIndex, targetStress, 0.05), 0, 100);
     const radInc = (envRadiation * 0.00002) + (isSolarStorm ? 0.0015 : 0.00001);
     const rad = c.radiationDoseMsv + radInc;
 
@@ -330,42 +330,73 @@ function tickTelemetry(simDeltaMs: number): Telemetry {
   }
 
   // --- Real-Time Power & Day/Night Orbital Eclipse ---
-  const inSunlight = Math.sin(orbitAngle) > -0.25;
-  const baseSolar = inSunlight ? 260 + noise(15) : 0;
-  simState.solar = Math.max(0, baseSolar);
-  
-  // Power budget
-  const netPower = (simState.solar - simState.consumption) / 120;
-  simState.battery = clamp(simState.battery + (netPower > 0 ? 0.06 : -0.05) * dt, 5, 100);
-  simState.voltage = clamp(24.2 + (simState.battery / 100) * 8.4 + noise(0.06), 18.0, 34.0);
-  simState.current = clamp((simState.consumption / Math.max(1, simState.voltage)) + noise(0.08), 0.5, 20.0);
+  const sunAngleFactor = Math.sin(orbitAngle);
+  const inSunlight = sunAngleFactor > -0.2;
+  const baseSolar = inSunlight ? Math.min(320, Math.max(0, (sunAngleFactor + 0.2) * 280)) : 0;
+  simState.solar = Math.round(baseSolar);
+  simState.consumption = 140;
 
-  // --- Real-Time Thermal Dynamics ---
-  const targetCpu = 38 + (simState.cpu / 100) * 20 + (inSunlight ? 8 : -5);
-  simState.cpuTemp = lerp(simState.cpuTemp, targetCpu, 0.02) + noise(0.12);
-  const targetBat = 16 + (inSunlight ? 7 : -5);
-  simState.batteryTemp = lerp(simState.batteryTemp, targetBat, 0.015) + noise(0.06);
-  simState.payloadTemp = lerp(simState.payloadTemp, 28 + (inSunlight ? 10 : -7), 0.015) + noise(0.08);
-  simState.extTemp = inSunlight ? 118 + noise(4) : -88 + noise(4);
+  const powerThreat = threatEffects.power || 0;
+  if (powerThreat > 0) {
+    // Under electrical fault: panels degraded, battery discharges at accelerated rate
+    simState.solar = Math.round(simState.solar * 0.15);
+    simState.consumption = 180;
+    const faultDischarge = 0.03 * powerThreat * dt;
+    simState.battery = clamp(simState.battery - faultDischarge, 5.0, 100);
+  } else {
+    // Nominal operation:
+    // Continuous slow operational decline over mission elapsed time
+    if (!inSunlight) {
+      // In Earth eclipse: drawing from battery at steady rate
+      const eclipseDischarge = 0.002 * dt;
+      simState.battery = clamp(simState.battery - eclipseDischarge, 10.0, 100);
+    } else {
+      // In sunlight: solar panels power bus and gently top up battery
+      if (simState.battery < 99.0) {
+        const rechargeRate = 0.0015 * dt;
+        simState.battery = clamp(simState.battery + rechargeRate, 0, 99.0);
+      } else {
+        // Slow overall mission lifecycle decay (~0.1% per mission day)
+        const targetSoC = Math.max(85.0, 98.4 - store.missionDay * 0.1);
+        simState.battery = lerp(simState.battery, targetSoC, 0.001);
+      }
+    }
+  }
 
-  // --- Real-Time ADCS Attitude Kinematics ---
-  simState.roll = lerp(simState.roll, 0.1, 0.05) + noise(0.03);
-  simState.pitch = lerp(simState.pitch, -0.05, 0.05) + noise(0.03);
-  simState.yaw = lerp(simState.yaw, 0.02, 0.05) + noise(0.02);
-  simState.angularVel = (Math.abs(simState.roll) + Math.abs(simState.pitch) + Math.abs(simState.yaw)) * 0.02;
-  simState.reactionWheel = clamp(3200 + noise(40), 1000, 6500);
+  // Clamped State of Charge (SoC) firmly between 0 and 100, formatted to 2 decimals
+  simState.battery = parseFloat(clamp(simState.battery, 0, 100).toFixed(2));
 
-  // --- Real-Time Communications Telemetry ---
+  // Bus voltage is a deterministic function of battery State of Charge
+  simState.voltage = parseFloat(clamp(24.0 + (simState.battery / 100) * 8.0, 18.0, 34.0).toFixed(1));
+  simState.current = parseFloat(clamp(simState.consumption / Math.max(1, simState.voltage), 0.5, 20.0).toFixed(1));
+
+  // --- Real-Time Thermal Dynamics (Deterministic) ---
+  const targetCpu = 38.0 + (simState.cpu / 100) * 14.0 + (inSunlight ? 4.0 : -3.0);
+  simState.cpuTemp = parseFloat(lerp(simState.cpuTemp, targetCpu, 0.02).toFixed(1));
+  const targetBat = 18.0 + (simState.battery > 90 ? 2.0 : 0) + (inSunlight ? 3.0 : -2.0);
+  simState.batteryTemp = parseFloat(lerp(simState.batteryTemp, targetBat, 0.015).toFixed(1));
+  const targetPayload = 28.0 + (inSunlight ? 4.0 : -3.0);
+  simState.payloadTemp = parseFloat(lerp(simState.payloadTemp, targetPayload, 0.015).toFixed(1));
+  simState.extTemp = inSunlight ? 116.0 : -86.0;
+
+  // --- Real-Time ADCS Attitude Kinematics (Deterministic) ---
+  simState.roll = parseFloat(lerp(simState.roll, 0.12, 0.02).toFixed(2));
+  simState.pitch = parseFloat(lerp(simState.pitch, -0.08, 0.02).toFixed(2));
+  simState.yaw = parseFloat(lerp(simState.yaw, 0.04, 0.02).toFixed(2));
+  simState.angularVel = 0.01;
+  simState.reactionWheel = 3240;
+
+  // --- Real-Time Communications Telemetry (Deterministic) ---
   const isDeep = simState.distanceFromEarthKm > 50000;
-  simState.signal = clamp(-72 - (isDeep ? 18 : 0) + noise(2.2), -120, -40);
-  simState.dataRate = clamp((isDeep ? 4.2 : 8.4) + noise(0.5), 0.1, 100);
-  simState.latency = clamp((isDeep ? 1280 : 340) + noise(18), 50, 5000);
-  simState.commUptime = clamp(simState.commUptime + noise(0.02), 85, 100);
+  simState.signal = isDeep ? -92 : -72;
+  simState.dataRate = isDeep ? 4.2 : 8.4;
+  simState.latency = isDeep ? 1280 : 340;
+  simState.commUptime = 100;
 
-  // --- Real-Time Avionics Compute Load ---
-  simState.cpu = clamp(32 + noise(3.5), 5, 98);
-  simState.memory = clamp(48 + noise(1.2), 20, 92);
-  simState.storage = clamp(simState.storage + 0.0001 * dt, 0, 100);
+  // --- Real-Time Avionics Compute Load (Deterministic) ---
+  simState.cpu = 32.0;
+  simState.memory = 48.0;
+  simState.storage = parseFloat(clamp(simState.storage + 0.0001 * dt, 0, 100).toFixed(1));
 
   // Apply live space threats & anomalies
   const affected = applyThreatEffects(simState);
@@ -408,7 +439,7 @@ function tickTelemetry(simDeltaMs: number): Telemetry {
     comm: {
       signalDbm: affected.signal,
       dataRateMbps: clamp(affected.dataRate, 0, 100),
-      packetsPerSec: 240 + Math.round(noise(12)),
+      packetsPerSec: 240,
       latencyMs: clamp(affected.latency, 0, 5000),
       uptime: clamp(affected.commUptime, 0, 100),
     },
@@ -438,7 +469,7 @@ function tickTelemetry(simDeltaMs: number): Telemetry {
       atmosphericDragN: affected.atmosphericDrag,
     },
     crew: updatedCrew,
-    overallHealth: clamp(affected.health + noise(0.5), 0, 100),
+    overallHealth: clamp(affected.health, 0, 100),
     healthStatus,
     dataSource: 'simulation',
   };
@@ -832,17 +863,17 @@ function tickEnvironment() {
   const store = useMissionStore.getState();
   const day = store.missionDay;
   const solarCycle = Math.sin(day / 30) * 0.5 + 0.5;
-  const solarLevel = 1.5 + solarCycle * 3.5 + noise(0.2);
+  const solarLevel = 1.5 + solarCycle * 3.5;
   const classification = solarLevel > 7 ? 'critical'
     : solarLevel > 4.5 ? 'warning'
     : solarLevel > 2 ? 'normal' : 'low';
 
   store.setEnvironment({
     solarActivityLevel: clamp(solarLevel, 0, 10),
-    radiationLevel: clamp(10 + solarLevel * 5 + noise(2), 5, 100),
-    magneticFieldNT: Math.round(30000 + noise(1000)),
+    radiationLevel: clamp(10 + solarLevel * 5, 5, 100),
+    magneticFieldNT: 31200,
     temperatureRangeC: [-90 - Math.round(solarLevel * 2), 120 + Math.round(solarLevel * 5)],
-    debrisDensity: clamp(1.2 + noise(0.3), 0.1, 10),
+    debrisDensity: 1.2,
     classification,
     dataSource: 'simulation',
   });
@@ -884,25 +915,39 @@ export function triggerThreat(type: string, name: string, description: string, e
   store.logEvent(event);
 }
 
+let accumulatedRealDeltaMs = 0;
+let accumulatedSimDeltaMs = 0;
+
 function onClockTick(payload: { realDelta: number; simDelta: number; simDays: number; tickCount: number }) {
   if (backendWS.isConnected) return;
   const store = useMissionStore.getState();
 
-  const telemetry = tickTelemetry(payload.simDelta);
-  store.pushTelemetry(telemetry);
+  accumulatedRealDeltaMs += payload.realDelta;
+  accumulatedSimDeltaMs += payload.simDelta;
 
-  if (payload.tickCount % 30 === 0) {
-    const pt: OrbitPoint = {
-      lat: telemetry.orbit.latitudeDeg,
-      lng: telemetry.orbit.longitudeDeg,
-      alt: telemetry.orbit.altitudeKm,
-      timestamp: Date.now(),
-    };
-    store.pushOrbitPoint(pt);
+  // Rate-limit telemetry updates to 1 Hz (~1 update per real second)
+  // This satisfies aerospace UI telemetry guidelines and prevents unnecessary 60 FPS React re-renders
+  if (accumulatedRealDeltaMs < 1000) {
+    return;
   }
 
-  // Push crew vitals history every 10 ticks for chart data
-  if (payload.tickCount % 10 === 0 && telemetry.crew && telemetry.crew.length > 0) {
+  const simDelta = accumulatedSimDeltaMs;
+  accumulatedRealDeltaMs = 0;
+  accumulatedSimDeltaMs = 0;
+
+  const telemetry = tickTelemetry(simDelta);
+  store.pushTelemetry(telemetry);
+
+  const pt: OrbitPoint = {
+    lat: telemetry.orbit.latitudeDeg,
+    lng: telemetry.orbit.longitudeDeg,
+    alt: telemetry.orbit.altitudeKm,
+    timestamp: Date.now(),
+  };
+  store.pushOrbitPoint(pt);
+
+  // Push crew vitals history for chart data at 1 Hz
+  if (telemetry.crew && telemetry.crew.length > 0) {
     const now = Date.now();
     for (const member of telemetry.crew) {
       store.pushCrewVitalSample(member.id, {
@@ -923,9 +968,9 @@ function onClockTick(payload: { realDelta: number; simDelta: number; simDays: nu
     }
   }
 
-  if (payload.tickCount % 30 === 0) tickAI();
-  if (payload.tickCount % 120 === 0) tickObjective();
-  if (payload.tickCount % 300 === 0) tickEnvironment();
+  tickAI();
+  tickObjective();
+  tickEnvironment();
 }
 
 export function startSimulationEngine() {
@@ -937,3 +982,16 @@ export function stopSimulationEngine() {
 }
 
 eventBus.subscribe('CLOCK_TICK', onClockTick);
+
+eventBus.subscribe('THREAT_DETECTED', (threat: any) => {
+  if (!threat) return;
+  const effects = threat.effects || {
+    [threat.type]: 2.5,
+  };
+  setThreatEffects(effects);
+  launchAIPipeline(threat);
+});
+
+eventBus.subscribe('THREAT_MITIGATED', () => {
+  clearThreatEffects();
+});

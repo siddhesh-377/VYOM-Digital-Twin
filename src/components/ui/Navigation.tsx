@@ -50,8 +50,8 @@ export function Navigation() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const isWizard = screen === 'onboarding' || screen === 'budget' || screen === 'launch' || screen === 'satellite' || screen === 'launch-sequence';
-  if (isWizard) return null;
+  const isHiddenScreen = screen === 'welcome' || screen === 'mission-control' || screen === 'onboarding' || screen === 'budget' || screen === 'launch' || screen === 'satellite' || screen === 'launch-sequence';
+  if (isHiddenScreen) return null;
 
   const isHumanMission = config?.type === 'human';
   const navItems = BASE_NAV_ITEMS.filter((item) => !item.humanOnly || isHumanMission);

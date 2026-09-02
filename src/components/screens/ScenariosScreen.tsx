@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
-import { DynamicSpacecraftModel } from '../three/DynamicSpacecraftModel';
+import { DynamicSpacecraftModel, resolveSpacecraftModelType } from '../three/DynamicSpacecraftModel';
 import { StarField } from '../three/SpaceScene';
 import { threatEngine } from '../../engines/ThreatEngine';
 import { backendWS, injectFaultViaBackend } from '../../services/BackendWebSocketService';
@@ -132,7 +132,7 @@ export function ScenariosScreen() {
           <directionalLight position={[-3, -2, -3]} intensity={0.4} color="#00e5ff" />
           <StarField />
           <DynamicSpacecraftModel
-            modelType={satellite?.type as any}
+            modelType={resolveSpacecraftModelType(satellite?.type, useMissionStore.getState().config?.type)}
             scale={1.3}
             interactive={true}
             activeThreatOverride={hoveredId || (activeThreats[0]?.type || activeThreats[0]?.id)}

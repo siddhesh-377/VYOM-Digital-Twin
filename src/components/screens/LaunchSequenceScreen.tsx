@@ -102,7 +102,7 @@ export function LaunchSequenceScreen() {
             style={{ width: '100%', height: '100%' }}
           >
             <MissionCinematicPlayer
-              onComplete={handleTransitionToUniverse}
+              onComplete={handleTransitionToMissionControl}
               onEnterUniverse={handleTransitionToUniverse}
               onEnterMissionControl={handleTransitionToMissionControl}
             />
@@ -117,7 +117,7 @@ export function LaunchSequenceScreen() {
             style={{ width: '100%', height: '100%' }}
           >
             <MissionStorytellingScroll
-              onComplete={handleTransitionToUniverse}
+              onComplete={handleTransitionToMissionControl}
               onEnterUniverse={handleTransitionToUniverse}
               onEnterMissionControl={handleTransitionToMissionControl}
             />

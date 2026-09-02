@@ -274,18 +274,19 @@ export function FarewellScreen() {
     };
   }, []);
 
-  // Automatic countdown to navigate to archive screen
+  // Automatic countdown to navigate to landing page
   useEffect(() => {
     if (autoRedirectCountdown === null) return;
     if (autoRedirectCountdown <= 0) {
-      setScreen('archive');
+      resetMission();
+      setScreen('welcome');
       return;
     }
     const timer = setInterval(() => {
       setAutoRedirectCountdown((prev) => (prev !== null ? prev - 1 : null));
     }, 1000);
     return () => clearInterval(timer);
-  }, [autoRedirectCountdown, setScreen]);
+  }, [autoRedirectCountdown, setScreen, resetMission]);
 
   const handleNewMission = () => {
     resetMission();
@@ -380,7 +381,7 @@ export function FarewellScreen() {
           {autoRedirectCountdown !== null && (
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#00d4ff', letterSpacing: '0.15em', marginBottom: 8 }}>
-                ◫ AUTOMATICALLY RETURNING TO MISSION ARCHIVE IN <span style={{ fontSize: 14, fontWeight: 700, color: '#00ff88' }}>{autoRedirectCountdown}s</span>…
+                ◫ AUTOMATICALLY RETURNING TO VYOM IN <span style={{ fontSize: 14, fontWeight: 700, color: '#00ff88' }}>{autoRedirectCountdown}s</span>…
               </div>
               <div style={{ width: '100%', maxWidth: 360, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, margin: '0 auto', overflow: 'hidden' }}>
                 <div style={{
@@ -395,11 +396,21 @@ export function FarewellScreen() {
 
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
-              onClick={handleGoToArchive}
+              onClick={() => {
+                resetMission();
+                setScreen('welcome');
+              }}
               className="btn btn-primary btn-lg"
               style={{ padding: '12px 28px', fontSize: 12, letterSpacing: '0.12em', boxShadow: '0 0 25px rgba(0,212,255,0.4)' }}
             >
-              ◫ VIEW ARCHIVE NOW
+              ← BACK TO VYOM
+            </button>
+            <button
+              onClick={handleGoToArchive}
+              className="btn btn-lg"
+              style={{ padding: '12px 24px', fontSize: 12, background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.3)', color: '#00d4ff' }}
+            >
+              ▫ VIEW ARCHIVE
             </button>
             <button
               onClick={() => setScreen('replay')}

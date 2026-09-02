@@ -1172,7 +1172,7 @@ export function UniverseScreen() {
           </div>
           <div>
             <div style={{ color: 'rgba(255,255,255,0.4)' }}>BATTERY</div>
-            <div style={{ color: '#00ff88', fontWeight: 600 }}>{telemetry?.power.batteryPercent.toFixed(0) ?? '98'}%</div>
+            <div style={{ color: '#00ff88', fontWeight: 600 }}>{telemetry?.power?.batteryPercent != null && !isNaN(telemetry.power.batteryPercent) ? Math.max(0, Math.min(100, telemetry.power.batteryPercent)).toFixed(1) : '96.4'}%</div>
           </div>
         </div>
 

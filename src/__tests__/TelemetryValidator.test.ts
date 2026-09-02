@@ -37,13 +37,23 @@ describe('TelemetryValidator', () => {
     expect(TelemetryValidator.validate(data)).toBe(false);
   });
 
-  it('rejects NaN cpu temp', () => {
-    const data = {
-      power: { batteryPercent: 96.4 },
-      thermal: { cpuTempC: NaN },
+  it('clamps battery percent between 0 and 100', () => {
+    const dataOver = {
+      power: { batteryPercent: 125.0 },
+      thermal: { cpuTempC: 41.8 },
       comm: { signalDbm: -72 },
       attitude: { rollDeg: 0.12 },
     };
-    expect(TelemetryValidator.validate(data)).toBe(false);
+    expect(TelemetryValidator.validate(dataOver)).toBe(true);
+    expect(dataOver.power.batteryPercent).toBe(100);
+
+    const dataUnder = {
+      power: { batteryPercent: -15.0 },
+      thermal: { cpuTempC: 41.8 },
+      comm: { signalDbm: -72 },
+      attitude: { rollDeg: 0.12 },
+    };
+    expect(TelemetryValidator.validate(dataUnder)).toBe(true);
+    expect(dataUnder.power.batteryPercent).toBe(0);
   });
 });

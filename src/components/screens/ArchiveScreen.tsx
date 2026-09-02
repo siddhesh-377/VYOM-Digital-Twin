@@ -35,9 +35,21 @@ export function ArchiveScreen() {
               ARCHIVE
             </div>
           </div>
-          <button onClick={handleNewMission} className="btn btn-primary">
-            + NEW MISSION
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={() => {
+                resetMission();
+                setScreen('welcome');
+              }}
+              className="btn"
+              style={{ color: 'rgba(255,255,255,0.65)', borderColor: 'rgba(255,255,255,0.18)' }}
+            >
+              ← BACK TO VYOM
+            </button>
+            <button onClick={handleNewMission} className="btn btn-primary">
+              + NEW MISSION
+            </button>
+          </div>
         </div>
 
         {/* Mission cards */}

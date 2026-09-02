@@ -8,6 +8,7 @@ import type {
   CrewVitalSample, Incident
 } from '../types/mission';
 import { MISSION_PROFILES } from '../types/missionProfiles';
+import { eventBus } from '../engines/MissionEventBus';
 
 const defaultEnvironment: SpaceEnvironment = {
   solarActivityLevel: 2.4,
@@ -296,9 +297,9 @@ const initialState: MissionState = {
   missionPhase: 'operations',
   controlMode: 'autonomous',
   screen: 'welcome',
-  missionDay: 0.1,
+  missionDay: 0.0,
   missionStartTime: Date.now(),
-  timeMultiplier: 1,
+  timeMultiplier: 7200,   // 1 real second = 2 mission hours (DEFAULT_ACCELERATION)
   isPaused: false,
   totalMissionDurationDays: 17,   // default: last milestone day for human mission
   elapsedRealMs: 0,
@@ -396,35 +397,38 @@ export const useMissionStore = create<MissionStore>()(
         const crewRoster = cfg?.crew && cfg.crew.length > 0 ? cfg.crew : defaultCrew;
         const lastMilestoneDay = milestones.reduce((max, m) => Math.max(max, m.requiresDays), 17);
         const totalDays = lastMilestoneDay + 2; // 2-day buffer after final milestone
+        const now = Date.now();
 
         set({
           status: 'active',
-          missionStartTime: Date.now(),
+          missionStartTime: now,     // Authoritative anchor for timestamp-based clock
           missionDay: 0,
+          elapsedRealMs: 0,
           isPaused: false,
+          timeMultiplier: 7200,      // 1 real second = 2 mission hours
           totalMissionDurationDays: totalDays,
           crew: crewRoster,
           crewVitalsHistory: {},
           milestones,
           blackBox: [
             {
-              id: `ev-launch-${Date.now()}`,
-              timestamp: Date.now(),
+              id: `ev-launch-${now}`,
+              timestamp: now,
               missionDay: 0,
               eventType: 'milestone',
               severity: 'nominal',
-              description: `Mission "${cfg?.name ?? 'VYOM-MISSION'}" successfully launched from ${cfg?.launchSite?.name ?? 'Sriharikota'}. Destination: ${destination.toUpperCase().replace('-', ' ')}. Human spaceflight crew aboard.`,
+              description: `Mission "${cfg?.name ?? 'VYOM-MISSION'}" launched from ${cfg?.launchSite?.name ?? 'Sriharikota'}. Destination: ${(destination ?? 'earth-orbit').toUpperCase().replace(/-/g, ' ')}. All systems nominal.`,
               source: 'Mission Launch Operations',
               immutable: true,
             },
           ],
-          orbitTrail: [{ lat: cfg?.launchSite?.lat ?? 13.72, lng: cfg?.launchSite?.lng ?? 80.23, alt: 650, timestamp: Date.now() }],
+          orbitTrail: [{ lat: cfg?.launchSite?.lat ?? 13.72, lng: cfg?.launchSite?.lng ?? 80.23, alt: 650, timestamp: now }],
           telemetryHistory: [defaultTelemetry],
           activeThreats: [],
           completedActions: [],
           pendingActions: [],
           stats: { ...defaultStats },
-          objectiveProgress: 2,
+          objectiveProgress: 0,
         });
       },
 
@@ -456,6 +460,9 @@ export const useMissionStore = create<MissionStore>()(
           if (!threat) return {};
           const mitigated = { ...threat, active: false, mitigatedAt: Date.now() };
           const remaining = s.activeThreats.filter((t) => t.id !== id);
+          if (remaining.length === 0) {
+            eventBus.publish('THREAT_MITIGATED', { id });
+          }
           return {
             activeThreats: remaining,
             threatHistory: [...s.threatHistory, mitigated],
@@ -544,18 +551,17 @@ export const useMissionStore = create<MissionStore>()(
           };
         }),
 
-      tickMission: (realDeltaMs) =>
-        set((s) => {
-          if (s.status === 'completed' || s.isPaused) return {};
-          if (s.objectiveProgress >= 100) return {};
-          const simMs = realDeltaMs * s.timeMultiplier;
-          const simDays = simMs / (1000 * 60 * 60 * 24);
-          const newDay = s.missionDay + simDays;
-          return {
-            missionDay: newDay,
-            elapsedRealMs: s.elapsedRealMs + realDeltaMs,
-          };
-        }),
+      tickMission: (realDeltaMs) => {
+        const s = get();
+        if (s.status === 'completed' || s.isPaused) return;
+        const accel = s.timeMultiplier > 0 ? s.timeMultiplier : 7200;
+        const simDeltaSecs = (realDeltaMs / 1000) * accel;
+        const simDays = simDeltaSecs / 86400;
+        set({
+          missionDay: s.missionDay + simDays,
+          elapsedRealMs: s.elapsedRealMs + realDeltaMs,
+        });
+      },
 
       updateStats: (partial) =>
         set((s) => ({ stats: { ...s.stats, ...partial } })),
