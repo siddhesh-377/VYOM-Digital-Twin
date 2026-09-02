@@ -88,24 +88,24 @@ sequenceDiagram
 
 ```mermaid
 graph TD
-    Sun["☀️ Solar Radiation & CME Flux"] -->|Illumination| PV["GaAs Solar Array Panels"]
-    Sun -->|Direct Solar Flux| TCS["Thermal Control (Multi-Node)"]
+    Sun["☀️ Solar Radiation & CME Flux"] -->|"Illumination"| PV["GaAs Solar Array Panels"]
+    Sun -->|"Direct Solar Flux"| TCS["Thermal Control (Multi-Node)"]
     
-    Orbit["🌍 Orbital Position (Altitude / Eclipse)"] -->|Shadow Geometry| PV
-    Orbit -->|Albedo & Earth IR| TCS
-    Orbit -->|Drag & J2 Torque| ADCS["Attitude Determination & Control (ADCS)"]
+    Orbit["🌍 Orbital Position (Altitude / Eclipse)"] -->|"Shadow Geometry"| PV
+    Orbit -->|"Albedo & Earth IR"| TCS
+    Orbit -->|"Drag & J2 Torque"| ADCS["Attitude Determination & Control (ADCS)"]
 
-    PV -->|Generated Power (Watts)| EPS["Electrical Power System (EPS)"]
-    EPS -->|Charge Current| Battery["Li-Ion Battery Cells (ODE SOC)"]
-    EPS -->|Bus Voltage| Subsystems["Avionics & Science Payloads"]
-    EPS -->|Heater Power| TCS
+    PV -->|"Generated Power [Watts]"| EPS["Electrical Power System (EPS)"]
+    EPS -->|"Charge Current"| Battery["Li-Ion Battery Cells (ODE SOC)"]
+    EPS -->|"Bus Voltage"| Subsystems["Avionics & Science Payloads"]
+    EPS -->|"Heater Power"| TCS
 
-    TCS -->|Temperature Effects| Battery
-    TCS -->|TWTA Thermal Noise| Comm["RF Communication (Link Budget)"]
+    TCS -->|"Temperature Effects"| Battery
+    TCS -->|"TWTA Thermal Noise"| Comm["RF Communication (Link Budget)"]
 
-    ADCS -->|Reaction Wheel Spin Rate| Gyro["Inertial Sensor Suite"]
-    ADCS -->|Solar Vector Tracking| PV
+    ADCS -->|"Reaction Wheel Spin Rate"| Gyro["Inertial Sensor Suite"]
+    ADCS -->|"Solar Vector Tracking"| PV
 
-    Subsystems -->|Power Consumption| EPS
-    Comm -->|Ground Station Elevation Window| Ground["Ground Station Pass"]
+    Subsystems -->|"Power Consumption"| EPS
+    Comm -->|"Ground Station Elevation Window"| Ground["Ground Station Pass"]
 ```

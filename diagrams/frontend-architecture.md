@@ -41,43 +41,51 @@ graph TD
 ## Screen Categorization
 
 ```mermaid
-mindmap
-  root((22 Screens))
-    Onboarding
-      Welcome
-      Onboarding
-      Budget
-    Launch Phase
-      LaunchLocation
-      SatelliteGeneration
-      LaunchSequence
-    Mission Operations
-      MissionControl
-      MissionPlanning
-      MissionTime
-      Timeline
-    Orbit & Space
-      Orbit
-      Universe
-      Environment
-    Data & Analysis
-      Telemetry
-      Scenarios
-      Reports
-      Archive
-    AI & Decisions
-      AIScreen
-      DangerDecision
-    Crew & Systems
-      Crew
-      Architecture
-    Recording & Replay
-      BlackBox
-      Replay
-      Completion
-    Farewell
-      Disposition
-      Farewell
+graph LR
+    Root["🖥️ 22 VYOM Screens"] --> C1["Onboarding Phase"]
+    Root --> C2["Launch Phase"]
+    Root --> C3["Mission Operations"]
+    Root --> C4["Orbit & Space Environment"]
+    Root --> C5["Telemetry & Analysis"]
+    Root --> C6["AI & Danger Decisions"]
+    Root --> C7["Crew & Spacecraft Architecture"]
+    Root --> C8["Ledger, Reports & Replay"]
+    Root --> C9["Mission Farewell"]
+
+    C1 --> WelcomeScreen["WelcomeScreen"]
+    C1 --> OnboardingScreen["OnboardingScreen"]
+    C1 --> BudgetScreen["BudgetScreen"]
+
+    C2 --> LaunchLocationScreen["LaunchLocationScreen"]
+    C2 --> SatelliteGenScreen["SatelliteGenerationScreen"]
+    C2 --> LaunchSeqScreen["LaunchSequenceScreen"]
+
+    C3 --> MissionControlScreen["MissionControlScreen"]
+    C3 --> PlanningScreen["MissionPlanningScreen"]
+    C3 --> MissionTimeScreen["MissionTimeScreen"]
+    C3 --> TimelineScreen["TimelineScreen"]
+
+    C4 --> OrbitScreen["OrbitScreen"]
+    C4 --> UniverseScreen["UniverseScreen"]
+    C4 --> EnvironmentScreen["EnvironmentScreen"]
+
+    C5 --> TelemetryScreen["TelemetryScreen"]
+    C5 --> ScenariosScreen["ScenariosScreen"]
+    C5 --> ReportsScreen["ReportsScreen"]
+    C5 --> ArchiveScreen["ArchiveScreen"]
+
+    C6 --> AIScreen["AIScreen"]
+    C6 --> DangerScreen["DangerDecisionScreen"]
+
+    C7 --> CrewScreen["CrewScreen"]
+    C7 --> ArchScreen["ArchitectureSelectionScreen"]
+
+    C8 --> BlackBoxScreen["BlackBoxScreen"]
+    C8 --> ReplayScreen["ReplayScreen"]
+    C8 --> CompletionScreen["CompletionScreen"]
+
+    C9 --> DispositionScreen["DispositionScreen"]
+    C9 --> FarewellScreen["FarewellScreen"]
 ```
 
 ## Component Hierarchy by Category
