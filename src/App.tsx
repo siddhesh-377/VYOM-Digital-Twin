@@ -58,6 +58,8 @@ function ScreenRouter() {
     return unsubscribe;
   }, []);
 
+  const isWelcome = screen === 'welcome';
+
   return (
     <AnimatePresence mode="wait">
       <motion.div
@@ -66,7 +68,13 @@ function ScreenRouter() {
         initial="initial"
         animate="animate"
         exit="exit"
-        style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
+        style={{
+          width: '100%',
+          height: isWelcome ? 'auto' : '100%',
+          minHeight: isWelcome ? '100vh' : undefined,
+          position: isWelcome ? 'relative' : 'absolute',
+          inset: isWelcome ? undefined : 0,
+        }}
       >
         {screen === 'welcome' && <WelcomeScreen />}
         {screen === 'onboarding' && <OnboardingScreen />}
@@ -101,12 +109,24 @@ function ScreenRouter() {
 }
 
 export default function App() {
+  const screen = useMissionStore((s) => s.screen);
+  const isWelcome = screen === 'welcome';
+
   useEffect(() => {
     initializeEngines();
   }, []);
 
   return (
-    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', position: 'relative', background: '#020409' }}>
+    <div
+      style={{
+        width: '100%',
+        minHeight: '100vh',
+        height: isWelcome ? 'auto' : '100vh',
+        overflow: isWelcome ? 'visible' : 'hidden',
+        position: 'relative',
+        background: '#020409',
+      }}
+    >
       <ScreenRouter />
       <Navigation />
     </div>

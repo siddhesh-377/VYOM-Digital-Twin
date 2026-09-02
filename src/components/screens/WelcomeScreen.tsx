@@ -398,23 +398,17 @@ export function WelcomeScreen() {
     const el = document.getElementById(id);
     if (!el) return;
 
-    // For GSAP-pinned sections, getBoundingClientRect is not reliable.
-    // Find the ScrollTrigger whose trigger element matches and use its documented start scroll position.
+    // Match ScrollTrigger instance for pinned or scrubbed sections
     const triggers = ScrollTrigger.getAll();
-    const matchingTrigger = triggers.find((st) => st.trigger === el);
+    const matchingTrigger = triggers.find(
+      (st) => st.trigger === el || st.pin === el || st.vars?.trigger === `#${id}` || st.vars?.trigger === el
+    );
 
-    if (matchingTrigger) {
-      // scroll to the pixel position where this pin starts
-      window.scrollTo({ top: matchingTrigger.start, behavior: 'smooth' });
+    if (matchingTrigger && typeof matchingTrigger.start === 'number') {
+      window.scrollTo({ top: matchingTrigger.start + 2, behavior: 'smooth' });
     } else {
-      // Non-pinned section: reliable offsetTop walk
-      let top = 0;
-      let node: HTMLElement | null = el;
-      while (node) {
-        top += node.offsetTop;
-        node = node.offsetParent as HTMLElement | null;
-      }
-      window.scrollTo({ top: Math.max(0, top - 72), behavior: 'smooth' });
+      const targetY = el.getBoundingClientRect().top + window.scrollY - 70;
+      window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
     }
   };
 
