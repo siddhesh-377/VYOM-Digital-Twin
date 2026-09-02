@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
+import { DynamicSpacecraftModel, resolveSpacecraftModelType } from '../three/DynamicSpacecraftModel';
+import { StarField } from '../three/SpaceScene';
 import {
   DangerScenario,
   ResponseOption,
@@ -13,6 +17,9 @@ export const DangerDecisionScreen: React.FC = () => {
   const telemetry = useMissionStore((s) => s.telemetry);
   const config = useMissionStore((s) => s.config);
   const activeThreats = useMissionStore((s) => s.activeThreats);
+  const mitigateThreat = useMissionStore((s) => s.mitigateThreat);
+  const logEvent = useMissionStore((s) => s.logEvent);
+  const missionDay = useMissionStore((s) => s.missionDay);
 
   // Active scenario & tabs
   const [activeScenario, setActiveScenario] = useState<DangerScenario>(DANGER_SCENARIOS_LIBRARY[0]);
@@ -181,6 +188,22 @@ export const DangerDecisionScreen: React.FC = () => {
           durationSec: parseInt(opt.executionTime) || 30,
         };
         setHistoryRecords((prev) => [newRecord, ...prev]);
+
+        // Closed-loop store update: log to blackbox and clear active matching threats
+        logEvent({
+          id: `ev-mitigate-${Date.now()}`,
+          timestamp: Date.now(),
+          missionDay: missionDay,
+          eventType: 'recovery',
+          severity: opt.simulatedOutcome === 'SUCCESS' ? 'nominal' : 'warning',
+          description: `Mitigation executed for [${activeScenario.name}]: Option ${opt.key} (${opt.name}). Outcome: ${opt.simulatedOutcome}. Subsystem health recovered to ${opt.predictedMetrics.finalHealth}%.`,
+          source: 'Danger Response Engine',
+          immutable: true,
+        });
+
+        if (activeThreats.length > 0) {
+          activeThreats.forEach((t) => mitigateThreat(t.id));
+        }
       }
     }, 1100);
   };
@@ -355,6 +378,56 @@ export const DangerDecisionScreen: React.FC = () => {
                 </div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.75)', lineHeight: 1.4 }}>
                   {activeScenario.description}
+                </div>
+              </div>
+
+              {/* 3D Spacecraft Digital Twin Threat Visualizer */}
+              <div
+                style={{
+                  height: 190,
+                  position: 'relative',
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  border: '1px solid rgba(0,240,255,0.25)',
+                  background: '#01050e',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+                  flexShrink: 0,
+                }}
+              >
+                <Canvas gl={{ antialias: true }} dpr={[1, 1.5]}>
+                  <PerspectiveCamera makeDefault position={[0, 0.4, 3.2]} fov={45} />
+                  <ambientLight intensity={0.25} />
+                  <directionalLight position={[3, 3, 3]} intensity={1.0} color="#fff5e8" />
+                  <directionalLight position={[-3, -2, -3]} intensity={0.5} color="#00e5ff" />
+                  <StarField />
+                  <DynamicSpacecraftModel
+                    modelType={resolveSpacecraftModelType(config?.type)}
+                    scale={1.15}
+                    interactive={true}
+                    activeThreatOverride={activeScenario.category || activeScenario.id}
+                  />
+                  <OrbitControls enablePan={false} enableZoom={true} autoRotate autoRotateSpeed={1.2} />
+                </Canvas>
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: 6,
+                    left: 8,
+                    right: 8,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    background: 'rgba(2,6,15,0.75)',
+                    backdropFilter: 'blur(6px)',
+                    padding: '3px 8px',
+                    borderRadius: 4,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 7.5,
+                    color: '#00f0ff',
+                  }}
+                >
+                  <span>3D SPACECRAFT TWIN</span>
+                  <span style={{ color: '#ff2d55', fontWeight: 700 }}>⚡ ANOMALY ACTIVE</span>
                 </div>
               </div>
 

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
-import { SatelliteModel } from '../three/SatelliteScene';
+import { DynamicSpacecraftModel, resolveSpacecraftModelType } from '../three/DynamicSpacecraftModel';
 import { StarField } from '../three/SpaceScene';
 import { threatEngine } from '../../engines/ThreatEngine';
 import { backendWS, injectFaultViaBackend } from '../../services/BackendWebSocketService';
@@ -16,6 +16,7 @@ const THREATS = [
     icon: '☀',
     description: 'Intense solar particle event — radiation spike, communication interference, thermal increase.',
     severity: 'critical' as const,
+    affectedSubsystem: 'Thermal & Power (TCS/EPS)',
     effects: { radiation: 8, solar: 6, thermal: 5 },
     color: '#ff8c00',
   },
@@ -25,6 +26,7 @@ const THREATS = [
     icon: '☄',
     description: 'Near-miss asteroid debris — microimpact damage to outer panels, attitude disturbance.',
     severity: 'critical' as const,
+    affectedSubsystem: 'Structural & ADCS Gyros',
     effects: { asteroid: 4 },
     color: '#ff2d55',
   },
@@ -34,6 +36,7 @@ const THREATS = [
     icon: '⚙',
     description: 'High-density debris field — evasive maneuvers required, fuel consumption elevated.',
     severity: 'warning' as const,
+    affectedSubsystem: 'Propulsion (OMS) & Shielding',
     effects: { debris: 5 },
     color: '#ff8c00',
   },
@@ -43,6 +46,7 @@ const THREATS = [
     icon: '⚡',
     description: 'Solar panel degradation — battery drain, emergency load shedding required.',
     severity: 'critical' as const,
+    affectedSubsystem: 'Electrical Power (EPS / Solar Arrays)',
     effects: { power: 7 },
     color: '#ff2d55',
   },
@@ -52,6 +56,7 @@ const THREATS = [
     icon: '🌡',
     description: 'Extreme thermal excursion — payload cooling failure, temperature thresholds exceeded.',
     severity: 'critical' as const,
+    affectedSubsystem: 'Cryogenic Radiators & Heat Shield (TCS)',
     effects: { thermal: 8 },
     color: '#ff8c00',
   },
@@ -61,6 +66,7 @@ const THREATS = [
     icon: '📡',
     description: 'Communication blackout — antenna fault or severe signal interference.',
     severity: 'warning' as const,
+    affectedSubsystem: 'High-Gain Antenna (HGA/RF Transponder)',
     effects: { comms: 9 },
     color: '#9b5de5',
   },
@@ -70,6 +76,7 @@ const THREATS = [
     icon: '🎯',
     description: 'Attitude control system anomaly — spacecraft tumbling, solar panel misalignment.',
     severity: 'warning' as const,
+    affectedSubsystem: 'Reaction Wheels & Star Trackers (ADCS)',
     effects: { attitude: 8 },
     color: '#ff8c00',
   },
@@ -77,12 +84,13 @@ const THREATS = [
 
 export function ScenariosScreen() {
   const activeThreats = useMissionStore((s) => s.activeThreats);
+  const satellite = useMissionStore((s) => s.satellite);
   const blackBox = useMissionStore((s) => s.blackBox);
+  const setScreen = useMissionStore((s) => s.setScreen);
   const [triggered, setTriggered] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const ai = useMissionStore((s) => s.aiAnalysis);
-  const incidents = useMissionStore((s) => s.incidents);
 
   const handleTrigger = async (threat: typeof THREATS[0]) => {
     if (activeThreats.length > 0) return; // Only one threat at a time
@@ -104,39 +112,80 @@ export function ScenariosScreen() {
   };
 
   const recentEvents = blackBox.slice(-6).reverse();
+  const activeThreatData = activeThreats[0] ? THREATS.find(t => t.id === activeThreats[0].type || t.id === activeThreats[0].id) : null;
 
   return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', background: '#020409',
-      paddingBottom: 56, overflow: 'hidden',
+      paddingBottom: 56, overflow: 'hidden', color: '#fff',
     }}>
-      {/* Left: 3D satellite */}
-      <div style={{ flex: '0 0 35%', position: 'relative', borderRight: '1px solid rgba(255,45,85,0.1)' }}>
-        <Canvas gl={{ antialias: true }} dpr={[1, 1.5]} camera={{ position: [0, 0.5, 3.5], fov: 45 }}>
-          <ambientLight intensity={activeThreats.length > 0 ? 0.05 : 0.2} />
+      {/* Left: Interactive 3D spacecraft scenario view */}
+      <div style={{ flex: '0 0 38%', position: 'relative', borderRight: '1px solid rgba(255,45,85,0.15)', background: '#020409' }}>
+        <Canvas gl={{ antialias: true }} dpr={[1, 1.5]}>
+          <PerspectiveCamera makeDefault position={[0, 0.5, 3.8]} fov={45} />
+          <ambientLight intensity={activeThreats.length > 0 ? 0.15 : 0.3} />
           <directionalLight
             position={[3, 3, 3]}
-            intensity={activeThreats.length > 0 ? 0.5 : 1}
-            color={activeThreats.some((t) => t.type === 'solar-storm') ? '#ff8c00' : '#fff5e8'}
+            intensity={activeThreats.length > 0 ? 0.7 : 1.2}
+            color={activeThreats.some((t) => t.type === 'solar-storm' || t.id === 'solar-storm') ? '#ff8c00' : '#fff5e8'}
           />
+          <directionalLight position={[-3, -2, -3]} intensity={0.4} color="#00e5ff" />
           <StarField />
-          <SatelliteModel scale={1.5} />
-          <OrbitControls enablePan={false} enableZoom={false} autoRotate autoRotateSpeed={activeThreats.length > 0 ? 3 : 0.5} />
+          <DynamicSpacecraftModel
+            modelType={resolveSpacecraftModelType(satellite?.type, useMissionStore.getState().config?.type)}
+            scale={1.3}
+            interactive={true}
+            activeThreatOverride={hoveredId || (activeThreats[0]?.type || activeThreats[0]?.id)}
+          />
+          <OrbitControls enablePan={true} enableZoom={true} autoRotate autoRotateSpeed={activeThreats.length > 0 ? 1.5 : 0.4} />
         </Canvas>
-        {/* Active threat overlay */}
-        {activeThreats.length > 0 && (
-          <div style={{
-            position: 'absolute', inset: 0, pointerEvents: 'none',
-            background: 'rgba(255,45,85,0.05)',
-            border: '2px solid rgba(255,45,85,0.3)',
-            animation: 'threat-alert 1s ease-in-out infinite',
-          }} />
-        )}
+
+        {/* Threat Banner & Affected Subsystem Diagnostic Card */}
         <div style={{
-          position: 'absolute', top: 16, left: 16,
-          fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em',
+          position: 'absolute', top: 16, left: 16, right: 16,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          background: 'rgba(5, 14, 30, 0.85)', backdropFilter: 'blur(12px)',
+          border: `1px solid ${activeThreats.length > 0 ? '#ff2d55' : 'rgba(0, 212, 255, 0.2)'}`,
+          borderRadius: 8, padding: '8px 14px',
         }}>
-          THREAT SIMULATOR · {activeThreats.length > 0 ? '⚠ THREAT ACTIVE' : 'NOMINAL'}
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: activeThreats.length > 0 ? '#ff2d55' : '#00d4ff', letterSpacing: '0.15em', fontWeight: 700 }}>
+              {activeThreats.length > 0 ? '⚠ DIGITAL TWIN UNDER THREAT' : 'DIGITAL TWIN NOMINAL'}
+            </div>
+            <div style={{ fontFamily: 'var(--font-body)', fontSize: 11, color: '#fff', marginTop: 2 }}>
+              {activeThreatData ? `Target: ${activeThreatData.affectedSubsystem}` : 'Subsystems Operating Within Bounds'}
+            </div>
+          </div>
+          {activeThreats.length > 0 && (
+            <button
+              onClick={() => setScreen('ai')}
+              style={{
+                background: 'rgba(155, 93, 229, 0.25)', border: '1px solid #9b5de5',
+                borderRadius: 4, padding: '4px 10px', color: '#fff',
+                fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              AI RECOVERY →
+            </button>
+          )}
+        </div>
+
+        {/* Hover / Active Telemetry Diagnostics Overlay */}
+        <div style={{
+          position: 'absolute', bottom: 16, left: 16, right: 16,
+          background: 'rgba(2, 6, 14, 0.88)', backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: 8, padding: '10px 14px',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: 'rgba(255,255,255,0.45)' }}>3D VISUAL FEEDBACK:</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: activeThreats.length > 0 ? '#ff3b30' : '#00ff88', fontWeight: 700 }}>
+              {activeThreats.length > 0 ? 'ANOMALOUS SUBSYSTEM HIGHLIGHTED' : 'READY FOR STRESS INJECTION'}
+            </span>
+          </div>
+          <p style={{ fontFamily: 'var(--font-body)', fontSize: 10.5, color: 'rgba(255,255,255,0.7)', margin: 0, lineHeight: 1.4 }}>
+            Subsystem colors reflect physical health: <span style={{ color: '#ff3b30' }}>Red/Orange (Thermal/Excursion)</span>, <span style={{ color: '#ff9f0a' }}>Amber (Power Brownout)</span>, <span style={{ color: '#bf5af2' }}>Purple (Comms Loss)</span>.
+          </p>
         </div>
       </div>
 
@@ -149,7 +198,7 @@ export function ScenariosScreen() {
         }}>
           <div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,45,85,0.7)', letterSpacing: '0.2em', marginBottom: 4 }}>
-              MISSION CHALLENGE MODE
+              CONNECTED DIGITAL TWIN STRESS TESTING
             </div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: '#fff' }}>
               DANGER SIMULATOR
@@ -188,7 +237,7 @@ export function ScenariosScreen() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               {THREATS.map((threat) => {
-                const isActive = activeThreats.some((t) => t.type === threat.id);
+                const isActive = activeThreats.some((t) => t.type === threat.id || t.id === threat.id);
                 const isTriggering = triggered === threat.id;
                 const disabled = activeThreats.length > 0 && !isActive;
                 return (
@@ -216,12 +265,15 @@ export function ScenariosScreen() {
                     }}>
                       {isActive ? '⚡ ACTIVE: ' : ''}{threat.name}
                     </div>
-                    <div style={{ fontFamily: 'var(--font-body)', fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.5 }}>
+                    <div style={{ fontFamily: 'var(--font-body)', fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.5, marginBottom: 6 }}>
                       {threat.description}
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: 'rgba(0, 212, 255, 0.7)', marginBottom: 8 }}>
+                      Impact: {threat.affectedSubsystem}
                     </div>
                     {!isActive && !disabled && (
                       <div style={{
-                        marginTop: 10, padding: '5px 10px',
+                        marginTop: 6, padding: '5px 10px',
                         background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
                         borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: 9,
                         color: threat.color, textAlign: 'center', letterSpacing: '0.1em',
@@ -236,7 +288,7 @@ export function ScenariosScreen() {
 
             <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 4 }}>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.2)' }}>
-                FICTIONAL SCENARIO · VYOM AI will autonomously detect and respond to all triggered threats
+                CONNECTED DIGITAL TWIN · Triggering causes real-time telemetry shifts, visual 3D degradation, incident alerts, and AI Guardian auto-diagnosis.
               </span>
             </div>
           </div>
@@ -244,7 +296,7 @@ export function ScenariosScreen() {
           {/* Recent events & Comparison */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.15em', color: 'rgba(255,255,255,0.3)', marginBottom: 12 }}>
-              RECENT EVENTS
+              RECENT DIGITAL TWIN EVENTS
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
               <AnimatePresence>

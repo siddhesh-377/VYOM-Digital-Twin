@@ -130,13 +130,25 @@ export class SafetyValidator {
     }
 
     // 5. Action Whitelist & Flight Rule Compatibility
-    const actionLower = (actionName || '').toLowerCase();
-    const isDestructive = actionLower.includes('vent_all') || actionLower.includes('overcharge') || actionLower.includes('disable_watchdog');
-    if (isDestructive) {
-      violations.push(`RULE-CMD-01: Action "${actionName}" identified as hazardous/destructive under Flight Safety Directive 402.`);
-      safetyMargin -= 50;
+    const actionLower = (actionName || '').trim().toLowerCase();
+    if (!actionLower) {
+      violations.push(`RULE-CMD-00: Action string cannot be empty.`);
+      safetyMargin = 0;
     } else {
-      verifiedRules.push(`RULE-CMD-01: Action "${actionName}" conforms to aerospace fault recovery procedures.`);
+      const isDestructive = actionLower.includes('vent_all') || actionLower.includes('overcharge') || actionLower.includes('disable_watchdog') || actionLower.includes('bombardment') || actionLower.includes('destroy');
+      const isKnownSafe = [
+        'strategy alpha-4', 'safe mode', 'thermal shunt', 'power reroute', 'load shedding', 'reboot',
+        'switch to redundant', 'attitude bias', 'emergency power down', 'cycle bus', 'antenna repoint',
+        'thruster trim', 'cooling loop', 'heater cycle', 'solar track', 'isolate bus', 'dump momentum',
+        'fault recovery', 'countermeasure', 'mitigation',
+      ].some((pattern) => actionLower.includes(pattern));
+
+      if (isDestructive || !isKnownSafe) {
+        violations.push(`RULE-CMD-01: Action "${actionName}" is not an approved flight recovery procedure.`);
+        safetyMargin -= 50;
+      } else {
+        verifiedRules.push(`RULE-CMD-01: Action "${actionName}" conforms to aerospace fault recovery procedures.`);
+      }
     }
 
     const passed = violations.length === 0;

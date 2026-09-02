@@ -171,6 +171,41 @@ export function OnboardingScreen() {
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         padding: '36px 24px 80px 24px',
       }}>
+        {/* Top bar with back button */}
+        <div style={{ width: '100%', maxWidth: 1100, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <button
+            onClick={() => setScreen('welcome')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: 6,
+              color: 'rgba(255,255,255,0.8)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10,
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = '#00d4ff';
+              e.currentTarget.style.color = '#00d4ff';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
+              e.currentTarget.style.color = 'rgba(255,255,255,0.8)';
+            }}
+          >
+            ← BACK TO LANDING
+          </button>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(0,212,255,0.6)', letterSpacing: '0.15em' }}>
+            VYOM MISSION DESIGN KERNEL
+          </div>
+        </div>
+
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.25em', color: 'rgba(0,212,255,0.7)', marginBottom: 8 }}>

@@ -3,6 +3,7 @@ import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import { motion } from 'framer-motion';
 import { useMissionStore } from '../../store/missionStore';
 import { Earth, StarField } from '../three/SpaceScene';
+import { DynamicSpacecraftModel } from '../three/DynamicSpacecraftModel';
 import { SatelliteModel, OrbitLine, GroundTrack } from '../three/SatelliteScene';
 import { useRef, useMemo, useState } from 'react';
 import * as THREE from 'three';
@@ -102,7 +103,7 @@ function CislunarTrajectory() {
 
       {/* Spacecraft traveling on curve */}
       <group ref={satRef}>
-        <SatelliteModel scale={0.15} />
+        <DynamicSpacecraftModel scale={0.25} />
       </group>
     </group>
   );
@@ -134,7 +135,7 @@ function PrecisionOrbitSatellite({ altitudeKm = 650, missionDay = 0 }: { altitud
 
   return (
     <group ref={satGroupRef}>
-      <SatelliteModel scale={0.4} />
+      <DynamicSpacecraftModel modelType={useMissionStore.getState().satellite?.type as any} scale={0.35} />
       {/* Velocity Vector (Tangential Arrow in Cyan) */}
       <mesh position={[0, 0, 0.3]}>
         <cylinderGeometry args={[0.015, 0.015, 0.4, 8]} />

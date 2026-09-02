@@ -9,11 +9,14 @@ export class TelemetryValidator {
     }
     
     // Check for NaN or invalid values
-    if (isNaN(data.power.batteryPercent) || isNaN(data.thermal.cpuTempC)) {
-      console.warn('Telemetry validation failed: NaN detected');
+    if (typeof data.power.batteryPercent !== 'number' || isNaN(data.power.batteryPercent) || isNaN(data.thermal.cpuTempC)) {
+      console.warn('Telemetry validation failed: NaN or invalid value detected');
       return false;
     }
     
+    // Ensure battery SoC is strictly within [0, 100]
+    data.power.batteryPercent = Math.max(0, Math.min(100, data.power.batteryPercent));
+
     return true;
   }
 }

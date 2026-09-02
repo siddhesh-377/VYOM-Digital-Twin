@@ -6,7 +6,7 @@ class MissionObjectiveEngine {
     eventBus.subscribe('CLOCK_TICK', this.onTick);
   }
 
-  private onTick = (payload: { tickCount: number }) => {
+  public onTick = (payload: { tickCount: number }) => {
     if (payload.tickCount % 120 !== 0) return;
 
     const store = useMissionStore.getState();

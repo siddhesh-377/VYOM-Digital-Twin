@@ -172,10 +172,10 @@ export function OrbitalTrackingPanel() {
           {state && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5, marginTop: 8 }}>
               {[
-                { label: 'LATITUDE', value: `${state.latitude_deg.toFixed(2)}°` },
-                { label: 'LONGITUDE', value: `${state.longitude_deg.toFixed(2)}°` },
-                { label: 'ALTITUDE', value: `${state.altitude_km.toFixed(1)} km` },
-                { label: 'VELOCITY', value: `${state.velocity_kms.toFixed(3)} km/s` },
+                { label: 'LATITUDE', value: `${(state.latitude_deg ?? 0).toFixed(2)}°` },
+                { label: 'LONGITUDE', value: `${(state.longitude_deg ?? 0).toFixed(2)}°` },
+                { label: 'ALTITUDE', value: `${(state.altitude_km ?? 0).toFixed(1)} km` },
+                { label: 'VELOCITY', value: `${(state.velocity_kms ?? 0).toFixed(3)} km/s` },
                 { label: 'X (ECI)', value: `${Number(state.position_eci_km?.[0] ?? 0).toFixed(0)} km` },
                 { label: 'Y (ECI)', value: `${Number(state.position_eci_km?.[1] ?? 0).toFixed(0)} km` },
               ].map(({ label, value }) => (
